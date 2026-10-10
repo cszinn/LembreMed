@@ -2,6 +2,7 @@ const path = require('path');
 const express = require('express');
 const config = require('./config');
 const api = require('./routes/api');
+const scheduler = require('./services/scheduler');
 
 const app = express();
 
@@ -25,4 +26,5 @@ app.use((err, req, res, next) => {
 
 app.listen(config.port, () => {
   console.log(`Servidor em http://localhost:${config.port} (DRY_RUN=${config.dryRun})`);
+  scheduler.iniciar();
 });
