@@ -1,4 +1,11 @@
+const twilio = require('twilio');
 const config = require('../config');
+
+let client;
+function getClient() {
+  if (!client) client = twilio(config.twilio.accountSid, config.twilio.authToken);
+  return client;
+}
 
 async function discar({ paciente, mensagem, chamadaIds }) {
   if (config.dryRun) {
@@ -7,7 +14,16 @@ async function discar({ paciente, mensagem, chamadaIds }) {
     console.log(`  "${mensagem.introducao} ${mensagem.pergunta}"`);
     return { callSid };
   }
-  throw new Error('Telefonia real ainda não implementada (Passo 6). Use DRY_RUN=true.');
+
+  if (!config.baseUrl) throw new Error('BASE_URL não configurada no .env');
+
+  // Conta trial só aceita to, from e url (sem querystring). Não adicionar outros parâmetros.
+  const ligacao = await getClient().calls.create({
+    to: paciente.telefone,
+    from: config.twilio.phoneNumber,
+    url: `${config.baseUrl}/twilio/voz`,
+  });
+  return { callSid: ligacao.sid };
 }
 
 module.exports = { discar };

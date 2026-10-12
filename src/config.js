@@ -6,6 +6,7 @@ module.exports = {
   dbPath: process.env.DB_PATH || './data/ura.sqlite',
   dryRun: process.env.DRY_RUN !== 'false',
   timezone: process.env.APP_TZ || 'America/Sao_Paulo',
+  voz: process.env.VOZ || 'Polly.Camila-Neural',
   twilio: {
     accountSid: process.env.TWILIO_ACCOUNT_SID,
     authToken: process.env.TWILIO_AUTH_TOKEN,

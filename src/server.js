@@ -2,6 +2,7 @@ const path = require('path');
 const express = require('express');
 const config = require('./config');
 const api = require('./routes/api');
+const twilioRoutes = require('./routes/twilio');
 const scheduler = require('./services/scheduler');
 
 const app = express();
@@ -15,6 +16,7 @@ app.get('/health', (req, res) => {
 });
 
 app.use('/api', api);
+app.use('/twilio', twilioRoutes);
 
 app.use((err, req, res, next) => {
   if (err.type === 'entity.parse.failed') {
