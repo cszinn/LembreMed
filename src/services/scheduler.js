@@ -98,4 +98,4 @@ function iniciar() {
   console.log(`Agendador ativo (varredura a cada minuto, fuso ${config.timezone})`);
 }
 
-module.exports = { iniciar, varrer, agora };
+module.exports = { iniciar, varrer, agora, ligar };

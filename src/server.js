@@ -4,6 +4,7 @@ const config = require('./config');
 const api = require('./routes/api');
 const twilioRoutes = require('./routes/twilio');
 const scheduler = require('./services/scheduler');
+const escalonamento = require('./services/escalonamento');
 
 const app = express();
 
@@ -29,4 +30,5 @@ app.use((err, req, res, next) => {
 app.listen(config.port, () => {
   console.log(`Servidor em http://localhost:${config.port} (DRY_RUN=${config.dryRun})`);
   scheduler.iniciar();
+  escalonamento.iniciar();
 });
