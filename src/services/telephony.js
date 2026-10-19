@@ -1,4 +1,4 @@
-const twilio = require('twilio');
+﻿const twilio = require('twilio');
 const config = require('../config');
 
 let client;
@@ -17,11 +17,11 @@ async function discar({ paciente, mensagem, chamadaIds }) {
 
   if (!config.baseUrl) throw new Error('BASE_URL não configurada no .env');
 
-  // Conta trial só aceita to, from e url (sem querystring). Não adicionar outros parâmetros.
   const ligacao = await getClient().calls.create({
     to: paciente.telefone,
     from: config.twilio.phoneNumber,
     url: `${config.baseUrl}/twilio/voz`,
+    timeout: 60,
   });
   return { callSid: ligacao.sid };
 }
