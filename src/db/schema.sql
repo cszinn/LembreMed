@@ -33,6 +33,11 @@ CREATE TABLE IF NOT EXISTS chamadas (
   status TEXT NOT NULL DEFAULT 'discando'
     CHECK (status IN ('discando', 'confirmada', 'sem_resposta', 'falhou', 'escalonada')),
   call_sid TEXT,
+  -- Resultado informado pela Twilio ao fim da ligação (diagnóstico de entrega)
+  twilio_status TEXT,
+  sip_code INTEGER,
+  duracao_seg INTEGER,
+  toque_seg INTEGER,
   criado_em TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
   atualizado_em TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
   UNIQUE (horario_id, data, tentativa)

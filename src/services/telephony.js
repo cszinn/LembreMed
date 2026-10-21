@@ -22,6 +22,9 @@ async function discar({ paciente, mensagem, chamadaIds }) {
     from: config.twilio.phoneNumber,
     url: `${config.baseUrl}/twilio/voz`,
     timeout: 60,
+    // Ao terminar, a Twilio avisa o resultado e o código SIP (ex.: 480 = indisponível/filtro da rede).
+    statusCallback: `${config.baseUrl}/twilio/status`,
+    statusCallbackEvent: ['completed'],
   });
   return { callSid: ligacao.sid };
 }

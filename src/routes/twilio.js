@@ -3,6 +3,7 @@ const twilio = require('twilio');
 const db = require('../db');
 const config = require('../config');
 const { montarMensagem } = require('../services/mensagem');
+const { registrarFim } = require('../services/escalonamento');
 
 const router = express.Router();
 const VOZ = { voice: 'Polly.Vitoria', language: 'pt-BR' };
@@ -131,6 +132,26 @@ router.post('/sem-digito', (req, res) => {
   resposta.say(VOZ, 'Não recebemos a sua resposta. Até logo.');
   resposta.hangup();
   enviar(res, resposta);
+});
+
+// statusCallback: a Twilio avisa o fim da ligação (atendida, no-answer, busy, failed...) com o código SIP.
+router.post('/status', async (req, res) => {
+  const { CallSid, CallStatus, SipResponseCode, CallDuration } = req.body;
+  try {
+    // Recusas muito rápidas podem chegar antes de o call_sid ser gravado: tenta por até 3 s.
+    for (let i = 0; i < 6; i++) {
+      const achou = registrarFim(CallSid, {
+        status: CallStatus,
+        sip: Number(SipResponseCode) || null,
+        duracao: Number(CallDuration) || 0,
+      });
+      if (achou) break;
+      await esperar(500);
+    }
+  } catch (e) {
+    console.error('[twilio] erro ao registrar o status da ligação:', e);
+  }
+  res.status(204).end();
 });
 
 module.exports = router;

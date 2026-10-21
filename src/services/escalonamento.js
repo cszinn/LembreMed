@@ -8,6 +8,12 @@ const { getClient } = require('./twilioClient');
 const MAX = config.maxTentativas;
 const INTERVALO = config.intervaloRetentativaMin;
 const MAX_FALHAS_ALERTA = 3;
+// Recusa rápida: a rede devolveu "no-answer" em poucos segundos, sem o telefone tocar de verdade
+// (comum em ligações internacionais para o Brasil). Religamos no minuto seguinte e as primeiras
+// recusas rápidas de cada dose não gastam tentativa (ninguém chegou a ouvir o telefone).
+const RECUSA_RAPIDA_SEG = 10;
+const RECUSAS_RAPIDAS_EXTRAS = 2;
+const ESPERA_RECUSA_RAPIDA_SEG = 30;
 const falhasAlerta = new Map();
 let rodando = false;
 
@@ -31,7 +37,45 @@ function marcar(ids, novo, de = ['discando']) {
     .run(novo, ...ids, ...de).changes;
 }
 
-// 1) Descobre o que aconteceu com as ligações que ainda estão "discando".
+const segundosEntre = (inicio, fim) => (inicio && fim ? Math.round((new Date(fim) - new Date(inicio)) / 1000) : null);
+
+// Grava o resultado final de uma ligação (status da Twilio, código SIP, duração e tempo até a recusa)
+// e tira as chamadas de "discando". Usado pelo statusCallback da Twilio e, se ele se perder, por acompanhar().
+// toque = segundos entre discar e o fim; se não vier, é medido desde a discagem (gravada em atualizado_em).
+function registrarFim(sid, { status, sip = null, duracao = 0, toque = null }) {
+  const linhas = db
+    .prepare(
+      `SELECT id, status,
+              CAST(round((julianday(datetime('now','localtime')) - julianday(atualizado_em)) * 86400) AS INTEGER) AS desde
+       FROM chamadas WHERE call_sid = ?`
+    )
+    .all(sid);
+  if (!linhas.length) return false;
+
+  const discando = linhas.filter((l) => l.status === 'discando');
+  if (toque === null && status !== 'completed' && discando.length) toque = Math.max(...discando.map((l) => l.desde));
+  if (status === 'completed') toque = null;
+
+  db.prepare(
+    `UPDATE chamadas SET twilio_status = ?, sip_code = coalesce(?, sip_code), duracao_seg = ?,
+            toque_seg = coalesce(toque_seg, ?)
+     WHERE call_sid = ?`
+  ).run(status, sip, duracao, toque, sid);
+
+  const ids = linhas.map((l) => l.id);
+  const novo = ['failed', 'canceled'].includes(status) ? 'falhou' : 'sem_resposta';
+  if (marcar(ids, novo)) {
+    const rapida = status === 'no-answer' && toque !== null && toque < RECUSA_RAPIDA_SEG;
+    const detalhe = status === 'completed' ? `atendida ${duracao}s` : `${status} em ${toque ?? '?'}s`;
+    console.log(
+      `[status] ligação ${detalhe} (SIP ${sip ?? '?'}) -> chamadas ${ids.join(',')} ${novo}` +
+        (rapida ? ' | recusa rápida da rede: religa no próximo minuto' : '')
+    );
+  }
+  return true;
+}
+
+// 1) Descobre o que aconteceu com as ligações que ainda estão "discando" (rede de segurança do statusCallback).
 async function acompanhar() {
   const linhas = db
     .prepare(
@@ -70,12 +114,12 @@ async function acompanhar() {
     try {
       const ligacao = await getClient().calls(sid).fetch();
       const st = ligacao.status;
-      if (['busy', 'no-answer', 'completed'].includes(st)) {
-        marcar(ids, 'sem_resposta');
-        console.log(`[acompanhar] ligação ${st} sem confirmação -> chamadas ${ids.join(',')} sem_resposta`);
-      } else if (['failed', 'canceled'].includes(st)) {
-        marcar(ids, 'falhou');
-        console.log(`[acompanhar] ligação ${st} -> chamadas ${ids.join(',')} falhou`);
+      if (['busy', 'no-answer', 'completed', 'failed', 'canceled'].includes(st)) {
+        registrarFim(sid, {
+          status: st,
+          duracao: Number(ligacao.duration) || 0,
+          toque: st === 'completed' ? null : segundosEntre(ligacao.startTime, ligacao.endTime),
+        });
       } else if (minutos >= 5) {
         marcar(ids, 'sem_resposta');
         console.log(`[acompanhar] ligação travada em ${st} há ${minutos} min -> chamadas ${ids.join(',')} sem_resposta`);
@@ -94,7 +138,13 @@ async function processar() {
               m.nome AS medicamento, m.descricao,
               p.id AS paciente_id, p.nome AS paciente, p.telefone,
               p.cuidador_nome, p.cuidador_telefone,
-              (c.atualizado_em <= datetime('now','localtime', ?)) AS pronta
+              c.toque_seg, c.sip_code,
+              (c.twilio_status = 'no-answer' AND c.toque_seg < ?) AS rapida,
+              (c.atualizado_em <= datetime('now','localtime',
+                 CASE WHEN c.twilio_status = 'no-answer' AND c.toque_seg < ? THEN ? ELSE ? END)) AS pronta,
+              (SELECT count(*) FROM chamadas c3
+               WHERE c3.horario_id = c.horario_id AND c3.data = c.data
+                 AND c3.twilio_status = 'no-answer' AND c3.toque_seg < ?) AS recusas_rapidas
        FROM chamadas c
        JOIN horarios h ON h.id = c.horario_id AND h.ativo = 1
        JOIN medicamentos m ON m.id = h.medicamento_id AND m.ativo = 1
@@ -107,7 +157,14 @@ async function processar() {
          )
        ORDER BY p.id, h.hora, m.nome`
     )
-    .all(`-${INTERVALO} minutes`, ...datasRelevantes());
+    .all(
+      RECUSA_RAPIDA_SEG,
+      RECUSA_RAPIDA_SEG,
+      `-${ESPERA_RECUSA_RAPIDA_SEG} seconds`,
+      `-${INTERVALO} minutes`,
+      RECUSA_RAPIDA_SEG,
+      ...datasRelevantes()
+    );
 
   const grupos = new Map();
   for (const l of linhas) {
@@ -117,15 +174,17 @@ async function processar() {
   }
 
   for (const [chave, grupo] of grupos) {
-    if (grupo[0].tentativa >= MAX) {
+    // Recusas rápidas da rede (até RECUSAS_RAPIDAS_EXTRAS por dose) não contam como tentativa.
+    const usadas = grupo[0].tentativa - Math.min(grupo[0].recusas_rapidas, RECUSAS_RAPIDAS_EXTRAS);
+    if (usadas >= MAX) {
       await escalar(chave, grupo);
     } else if (grupo.every((l) => l.pronta)) {
-      await tentarNovamente(grupo);
+      await tentarNovamente(grupo, usadas);
     }
   }
 }
 
-async function tentarNovamente(grupo) {
+async function tentarNovamente(grupo, usadas) {
   const proxima = grupo[0].tentativa + 1;
   const reservar = db.prepare(
     'INSERT OR IGNORE INTO chamadas (horario_id, data, tentativa) VALUES (?, ?, ?)'
@@ -139,8 +198,10 @@ async function tentarNovamente(grupo) {
   })();
   if (!novos.length) return;
 
+  const g = grupo[0];
+  const motivo = g.rapida ? `a rede recusou em ${g.toque_seg}s (SIP ${g.sip_code ?? '?'})` : 'não confirmou';
   console.log(
-    `[escalonamento] ${grupo[0].paciente} não confirmou o remédio das ${grupo[0].hora}: tentativa ${proxima} de ${MAX}`
+    `[escalonamento] ${g.paciente}, remédio das ${g.hora}: ${motivo} -> ligação ${proxima} (${usadas} de ${MAX} tentativas usadas)`
   );
   await ligar(novos, grupo[0].hora);
 }
@@ -191,4 +252,4 @@ function iniciar() {
   );
 }
 
-module.exports = { iniciar, acompanhar, processar };
+module.exports = { iniciar, acompanhar, processar, registrarFim };

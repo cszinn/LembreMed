@@ -27,7 +27,8 @@ No horário cadastrado, o sistema liga para o paciente e uma voz em português d
 - 📞 **Ligação automática** no horário de cada medicamento, com voz neural em pt-BR (Amazon Polly via Twilio).
 - 🗣️ **Mensagem dinâmica**: agrupa vários remédios do mesmo horário numa única ligação ("Primeiro: …, Segundo: …").
 - 🔢 **Confirmação por tecla (DTMF)**: o paciente aperta 1 e a tomada fica registrada.
-- 🔁 **Retentativas configuráveis**: liga de novo após X minutos, até N tentativas.
+- 🔁 **Retentativas configuráveis**: liga de novo após X minutos, até N tentativas. Se a rede recusa a ligação em poucos segundos (o telefone nem toca), religa no minuto seguinte e as 2 primeiras recusas desse tipo não gastam tentativa.
+- 🩺 **Diagnóstico de entrega**: o status final da Twilio, o código SIP e o tempo até a recusa ficam gravados em cada chamada.
 - 🚨 **Escalonamento ao cuidador** por SMS ou WhatsApp quando o paciente não confirma.
 - 🛡️ **Agendamento idempotente**: cada horário gera no máximo uma chamada por dia/tentativa, mesmo com reinícios do servidor.
 - 🖥️ **Painel do cuidador** (web) para cadastrar pacientes, medicamentos e horários.
@@ -201,7 +202,7 @@ curl -X POST http://localhost:3000/api/pacientes/1/medicamentos \
 
 </details>
 
-**Webhooks da Twilio** (`/twilio`): `POST /voz` (roteiro da ligação), `POST /digito` (tecla pressionada) e `POST /sem-digito` (atendeu sem responder).
+**Webhooks da Twilio** (`/twilio`): `POST /voz` (roteiro da ligação), `POST /digito` (resposta do paciente), `POST /sem-digito` (atendeu sem responder) e `POST /status` (fim da ligação: status e código SIP).
 
 Há também `GET /health` para verificação de saúde do servidor.
 
