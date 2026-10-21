@@ -137,7 +137,8 @@ async function processar() {
       `SELECT c.id, c.horario_id, c.data, c.tentativa, h.hora,
               m.nome AS medicamento, m.descricao,
               p.id AS paciente_id, p.nome AS paciente, p.telefone,
-              p.cuidador_nome, p.cuidador_telefone,
+              coalesce(cd.nome, p.cuidador_nome) AS cuidador_nome,
+              coalesce(cd.telefone, p.cuidador_telefone) AS cuidador_telefone,
               c.toque_seg, c.sip_code,
               (c.twilio_status = 'no-answer' AND c.toque_seg < ?) AS rapida,
               (c.atualizado_em <= datetime('now','localtime',
@@ -149,6 +150,7 @@ async function processar() {
        JOIN horarios h ON h.id = c.horario_id AND h.ativo = 1
        JOIN medicamentos m ON m.id = h.medicamento_id AND m.ativo = 1
        JOIN pacientes p ON p.id = m.paciente_id AND p.ativo = 1
+       LEFT JOIN cuidadores cd ON cd.id = p.cuidador_id
        WHERE c.data IN (?, ?)
          AND c.status IN ('sem_resposta', 'falhou')
          AND NOT EXISTS (

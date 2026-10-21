@@ -1,9 +1,20 @@
-CREATE TABLE IF NOT EXISTS pacientes (
+CREATE TABLE IF NOT EXISTS cuidadores (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   nome TEXT NOT NULL,
+  email TEXT UNIQUE NOT NULL,
+  senha_hash TEXT NOT NULL,
   telefone TEXT NOT NULL,
-  cuidador_nome TEXT NOT NULL,
-  cuidador_telefone TEXT NOT NULL,
+  canal_alerta TEXT NOT NULL DEFAULT 'sms',
+  criado_em TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
+);
+
+CREATE TABLE IF NOT EXISTS pacientes (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  cuidador_id INTEGER REFERENCES cuidadores(id) ON DELETE CASCADE,
+  nome TEXT NOT NULL,
+  telefone TEXT NOT NULL,
+  cuidador_nome TEXT,
+  cuidador_telefone TEXT,
   ativo INTEGER NOT NULL DEFAULT 1,
   criado_em TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
 );

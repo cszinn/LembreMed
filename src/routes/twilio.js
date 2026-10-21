@@ -3,6 +3,8 @@ const twilio = require('twilio');
 const db = require('../db');
 const config = require('../config');
 const { montarMensagem } = require('../services/mensagem');
+const validarAssinaturaTwilio = require('../middleware/twilioAssinatura');
+const { interpretarFala, DICAS } = require('../services/interpretarResposta');
 const { registrarFim } = require('../services/escalonamento');
 
 const router = express.Router();
@@ -14,8 +16,8 @@ function getClient() {
   return client;
 }
 
-// BYPASS DE SEGURANÇA TOTAL PARA O NGROK (EVITA ERRO 403 E MENSAGENS EM INGLÊS)
-router.use((req, res, next) => next());
+// Só aceita requisições realmente assinadas pela Twilio (ver middleware/twilioAssinatura.js).
+router.use(validarAssinaturaTwilio);
 
 function lerIds(req) {
   return String(req.query.ids || '')
@@ -61,6 +63,30 @@ function enviar(res, resposta) {
   res.type('text/xml').send(resposta.toString());
 }
 
+// Resposta para quando não conseguimos identificar a chamada: avisa, desliga e NÃO confirma nada.
+function falhaTemporaria() {
+  const r = new twilio.twiml.VoiceResponse();
+  r.say(VOZ, 'Olá. Não conseguimos carregar o seu lembrete agora. Vamos ligar novamente em instantes.');
+  r.hangup();
+  return r;
+}
+
+// Quantas vezes perguntamos na mesma ligação antes de desistir (1ª pergunta + 1 repetição).
+const MAX_PERGUNTAS = 2;
+
+// Cria o <Gather> que escuta a fala do paciente (pt-BR). Não há resposta por teclado.
+function criarGather(resposta, lista, pergunta = 1) {
+  return resposta.gather({
+    input: 'speech',
+    language: 'pt-BR',
+    speechTimeout: 'auto',
+    timeout: 10,
+    hints: DICAS,
+    action: `${config.baseUrl}/twilio/digito?ids=${lista}&t=${pergunta}`,
+    method: 'POST',
+  });
+}
+
 // Como mudamos o painel da Twilio para /atendimento na sua tentativa anterior,
 // Adicionamos as duas rotas para capturarem a chamada sem dar Erro 404
 router.post(['/voz', '/atendimento'], async (req, res) => {
@@ -69,58 +95,80 @@ router.post(['/voz', '/atendimento'], async (req, res) => {
     const itens = await buscarItens(req.body.CallSid);
 
     if (!itens.length) {
-      console.log(`[twilio] /voz: nenhuma chamada encontrada para o CallSid ${req.body.CallSid}`);
-      resposta.say(VOZ, 'Olá. Esta é a assistente de saúde. Por favor, aperte a tecla 1 no seu telefone para continuarmos.');
-
-      const gather = resposta.gather({
-        numDigits: 1,
-        timeout: 10,
-        action: `${config.baseUrl}/twilio/digito?ids=1`,
-        method: 'POST',
-      });
-      // Em caso de falha silenciosa, forçamos o disparo sem DB
-      return enviar(res, resposta);
+      // Não sabemos de qual chamada se trata: nunca oferecemos confirmação (confirmar às cegas
+      // poderia marcar a chamada de OUTRO paciente). Encerramos; como a chamada continua "discando"
+      // no banco, o escalonamento vê o fim da ligação na Twilio e agenda a nova tentativa.
+      console.warn(`[twilio] /voz: nenhuma chamada encontrada para o CallSid ${req.body.CallSid}; encerrando sem confirmar`);
+      return enviar(res, falhaTemporaria());
     }
 
     const lista = itens.map((i) => i.id).join(',');
     console.log(`[twilio] atenderam: chamadas ${lista}`);
 
     const { introducao, pergunta } = montarMensagem(itens[0].paciente, itens);
-    const gather = resposta.gather({
-      numDigits: 1,
-      timeout: 10,
-      action: `${config.baseUrl}/twilio/digito?ids=${lista}`,
-      method: 'POST',
-    });
+    const gather = criarGather(resposta, lista, 1);
     gather.say(VOZ, introducao);
     gather.pause({ length: 1 });
-    gather.say(VOZ, `${pergunta}. Para confirmar, aperte a tecla 1 no seu telefone.`);
+    gather.say(VOZ, pergunta);
 
     resposta.redirect({ method: 'POST' }, `${config.baseUrl}/twilio/sem-digito?ids=${lista}`);
 
     enviar(res, resposta);
   } catch (e) {
     console.error('[twilio] erro no atendimento principal:', e);
-    // Se estourar erro interno, não deixa a Twilio desligar em inglês, segura a chamada:
-    resposta.say(VOZ, 'Olá, sou a assistente. Por favor, aperte a tecla 1.');
-    enviar(res, resposta);
+    // Em erro interno, fala em português (em vez da mensagem em inglês da Twilio) e encerra sem confirmar nada.
+    enviar(res, falhaTemporaria());
   }
 });
+
+// Decide o que o paciente respondeu, a partir da fala transcrita pela Twilio.
+// Segurança: só "sim" confirma. Fala ambígua, vazia ou com confiança baixa NUNCA confirma.
+function lerResposta(body) {
+  const fala = String(body.SpeechResult || '').trim();
+  if (!fala) return { resultado: 'indefinido', origem: 'sem fala' };
+
+  const confianca = body.Confidence === undefined || body.Confidence === '' ? 1 : Number(body.Confidence);
+  let resultado = interpretarFala(fala);
+  // Um "não" com confiança baixa é inofensivo (só liga de novo). Um "sim" com confiança baixa não pode confirmar.
+  if (resultado === 'sim' && !(confianca >= config.confiancaMinimaVoz)) resultado = 'indefinido';
+  return { resultado, origem: `fala "${fala}" (confiança ${Number.isFinite(confianca) ? confianca.toFixed(2) : '?'})` };
+}
 
 router.post('/digito', (req, res) => {
   const ids = lerIds(req);
   const resposta = new twilio.twiml.VoiceResponse();
 
-  if (req.body.Digits === '1') {
+  if (!ids.length) {
+    console.warn('[twilio] /digito sem ids válidos; ignorando');
+    return enviar(res, falhaTemporaria());
+  }
+
+  const pergunta = Math.max(1, Number(req.query.t) || 1);
+  const { resultado, origem } = lerResposta(req.body);
+  console.log(`[twilio] chamadas ${ids.join(',')} | ${origem} -> ${resultado}`);
+
+  if (resultado === 'sim') {
     atualizar(ids, 'confirmada');
     console.log(`[twilio] chamadas ${ids.join(',')} CONFIRMADAS`);
     resposta.say(VOZ, 'Obrigado! Confirmação recebida. Tenha um ótimo dia.');
+    resposta.hangup();
+  } else if (resultado === 'nao') {
+    // "Ainda não tomei": não confirma. Fica sem_resposta e o escalonamento liga de novo
+    // (ou avisa o cuidador quando as tentativas acabarem).
+    atualizar(ids, 'sem_resposta');
+    resposta.say(VOZ, 'Tudo bem. Daqui a pouco entramos em contato de novo. Até logo.');
+    resposta.hangup();
+  } else if (pergunta < MAX_PERGUNTAS) {
+    // Não entendeu: pergunta mais uma vez, de forma curta.
+    const lista = ids.join(',');
+    const gather = criarGather(resposta, lista, pergunta + 1);
+    gather.say(VOZ, 'Desculpe, não entendi. Você já tomou o remédio? Diga sim ou não.');
+    resposta.redirect({ method: 'POST' }, `${config.baseUrl}/twilio/sem-digito?ids=${lista}`);
   } else {
     atualizar(ids, 'sem_resposta');
-    console.log(`[twilio] tecla ${req.body.Digits} não reconhecida (chamadas ${ids.join(',')})`);
-    resposta.say(VOZ, 'Não entendi a tecla. Até logo.');
+    resposta.say(VOZ, 'Não conseguimos entender a sua resposta. Até logo.');
+    resposta.hangup();
   }
-  resposta.hangup();
   enviar(res, resposta);
 });
 

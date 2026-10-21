@@ -17,8 +17,8 @@ function montarMensagem(nomePaciente, itens) {
     : `Olá, ${nome}. Está na hora do seu remédio. Pegue ${itens[0].medicamento}: ${itens[0].descricao}.`;
 
   const pergunta = varios
-    ? 'Quando estiver com os remédios na mão, aperte o número 1 no teclado do telefone.'
-    : 'Quando estiver com o remédio na mão, aperte o número 1 no teclado do telefone.';
+    ? 'Você já tomou os remédios? Diga sim ou não.'
+    : 'Você já tomou o remédio? Diga sim ou não.';
 
   return { introducao, pergunta };
 }

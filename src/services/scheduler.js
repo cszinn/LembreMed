@@ -22,10 +22,12 @@ const buscarDevidos = db.prepare(`
   SELECT h.id AS horario_id, h.hora,
          m.nome AS medicamento, m.descricao,
          p.id AS paciente_id, p.nome AS paciente, p.telefone,
-         p.cuidador_nome, p.cuidador_telefone
+         coalesce(c.nome, p.cuidador_nome) AS cuidador_nome,
+         coalesce(c.telefone, p.cuidador_telefone) AS cuidador_telefone
   FROM horarios h
   JOIN medicamentos m ON m.id = h.medicamento_id AND m.ativo = 1
   JOIN pacientes p ON p.id = m.paciente_id AND p.ativo = 1
+  LEFT JOIN cuidadores c ON c.id = p.cuidador_id
   WHERE h.ativo = 1 AND h.hora = ?
   ORDER BY p.id, m.nome
 `);

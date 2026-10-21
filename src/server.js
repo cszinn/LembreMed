@@ -1,6 +1,7 @@
 const path = require('path');
 const express = require('express');
 const config = require('./config');
+const auth = require('./routes/auth');
 const api = require('./routes/api');
 const twilioRoutes = require('./routes/twilio');
 const scheduler = require('./services/scheduler');
@@ -16,6 +17,7 @@ app.get('/health', (req, res) => {
   res.json({ status: 'ok' });
 });
 
+app.use('/api/auth', auth.router);
 app.use('/api', api);
 app.use('/twilio', twilioRoutes);
 
