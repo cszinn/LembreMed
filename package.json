@@ -3,7 +3,9 @@
   "version": "1.0.0",
   "description": "LembreMed: URA que liga para o paciente na hora do remédio e avisa o cuidador por SMS",
   "scripts": {
-    "start": "node src/server.js",
+    "start": "node src/iniciar.js",
+    "configurar": "node src/configurar.js",
+    "servidor": "node src/server.js",
     "dev": "node --watch src/server.js",
     "db:reset": "node src/db/reset.js",
     "db:seed": "node src/db/seed.js"
@@ -19,5 +21,11 @@
     "google-auth-library": "^11.3.1",
     "node-cron": "^4.6.0",
     "twilio": "^6.1.2"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "allowScripts": {
+    "better-sqlite3": false
   }
 }
