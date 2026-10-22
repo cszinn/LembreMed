@@ -2,20 +2,24 @@ const cron = require('node-cron');
 const db = require('../db');
 const config = require('../config');
 const { agora, ligar } = require('./scheduler');
-const { enviarAlerta } = require('./alerta');
+const { enviarSms } = require('./alerta');
 const { getClient } = require('./twilioClient');
 
 const MAX = config.maxTentativas;
 const INTERVALO = config.intervaloRetentativaMin;
 const MAX_FALHAS_ALERTA = 3;
 // Recusa rápida: a rede devolveu "no-answer" em poucos segundos, sem o telefone tocar de verdade
-// (comum em ligações internacionais para o Brasil). Religamos no minuto seguinte e as primeiras
-// recusas rápidas de cada dose não gastam tentativa (ninguém chegou a ouvir o telefone).
+// (SIP 480). Em algumas linhas a 1ª ligação de cada dose é recusada e uma das seguintes completa.
+// Por isso religamos em segundos (5, 10, 20, 40 e depois a cada 60 s), sem esperar o próximo minuto,
+// e as primeiras recusas rápidas de cada dose não gastam tentativa (ninguém chegou a ouvir o telefone).
 const RECUSA_RAPIDA_SEG = 10;
-const RECUSAS_RAPIDAS_EXTRAS = 2;
-const ESPERA_RECUSA_RAPIDA_SEG = 30;
+const RECUSAS_RAPIDAS_EXTRAS = 6;
+const esperaRecusaRapida = (recusas) => Math.min(5 * 2 ** Math.max(recusas - 1, 0), 60);
 const falhasAlerta = new Map();
+let iniciado = false;
 let rodando = false;
+let rodarDeNovo = false;
+let proximaRodada = null;
 
 // Só mexe em chamadas de hoje e de ontem (cobre a virada da meia-noite e ignora linhas de teste antigas).
 function datasRelevantes() {
@@ -69,8 +73,9 @@ function registrarFim(sid, { status, sip = null, duracao = 0, toque = null }) {
     const detalhe = status === 'completed' ? `atendida ${duracao}s` : `${status} em ${toque ?? '?'}s`;
     console.log(
       `[status] ligação ${detalhe} (SIP ${sip ?? '?'}) -> chamadas ${ids.join(',')} ${novo}` +
-        (rapida ? ' | recusa rápida da rede: religa no próximo minuto' : '')
+        (rapida ? ' | recusa rápida da rede: religa em instantes' : '')
     );
+    if (rapida) agendarRodada(1);
   }
   return true;
 }
@@ -137,12 +142,9 @@ async function processar() {
       `SELECT c.id, c.horario_id, c.data, c.tentativa, h.hora,
               m.nome AS medicamento, m.descricao,
               p.id AS paciente_id, p.nome AS paciente, p.telefone,
-              coalesce(cd.nome, p.cuidador_nome) AS cuidador_nome,
-              coalesce(cd.telefone, p.cuidador_telefone) AS cuidador_telefone,
-              c.toque_seg, c.sip_code,
-              (c.twilio_status = 'no-answer' AND c.toque_seg < ?) AS rapida,
-              (c.atualizado_em <= datetime('now','localtime',
-                 CASE WHEN c.twilio_status = 'no-answer' AND c.toque_seg < ? THEN ? ELSE ? END)) AS pronta,
+              cd.nome AS cuidador_nome, cd.telefone AS cuidador_telefone,
+              c.twilio_status, c.toque_seg, c.sip_code,
+              CAST(round((julianday(datetime('now','localtime')) - julianday(c.atualizado_em)) * 86400) AS INTEGER) AS desde,
               (SELECT count(*) FROM chamadas c3
                WHERE c3.horario_id = c.horario_id AND c3.data = c.data
                  AND c3.twilio_status = 'no-answer' AND c3.toque_seg < ?) AS recusas_rapidas
@@ -150,7 +152,7 @@ async function processar() {
        JOIN horarios h ON h.id = c.horario_id AND h.ativo = 1
        JOIN medicamentos m ON m.id = h.medicamento_id AND m.ativo = 1
        JOIN pacientes p ON p.id = m.paciente_id AND p.ativo = 1
-       LEFT JOIN cuidadores cd ON cd.id = p.cuidador_id
+       JOIN cuidadores cd ON cd.id = p.cuidador_id
        WHERE c.data IN (?, ?)
          AND c.status IN ('sem_resposta', 'falhou')
          AND NOT EXISTS (
@@ -159,17 +161,13 @@ async function processar() {
          )
        ORDER BY p.id, h.hora, m.nome`
     )
-    .all(
-      RECUSA_RAPIDA_SEG,
-      RECUSA_RAPIDA_SEG,
-      `-${ESPERA_RECUSA_RAPIDA_SEG} seconds`,
-      `-${INTERVALO} minutes`,
-      RECUSA_RAPIDA_SEG,
-      ...datasRelevantes()
-    );
+    .all(RECUSA_RAPIDA_SEG, ...datasRelevantes());
 
   const grupos = new Map();
   for (const l of linhas) {
+    l.rapida = l.twilio_status === 'no-answer' && l.toque_seg !== null && l.toque_seg < RECUSA_RAPIDA_SEG;
+    // Quanto esperar desde o fim da última ligação: segundos após uma recusa rápida, RETRY_MINUTOS nos outros casos.
+    l.espera = l.rapida ? esperaRecusaRapida(l.recusas_rapidas) : INTERVALO * 60;
     const chave = `${l.paciente_id}|${l.data}|${l.hora}|${l.tentativa}`;
     if (!grupos.has(chave)) grupos.set(chave, []);
     grupos.get(chave).push(l);
@@ -180,8 +178,14 @@ async function processar() {
     const usadas = grupo[0].tentativa - Math.min(grupo[0].recusas_rapidas, RECUSAS_RAPIDAS_EXTRAS);
     if (usadas >= MAX) {
       await escalar(chave, grupo);
-    } else if (grupo.every((l) => l.pronta)) {
+      continue;
+    }
+    const falta = Math.max(...grupo.map((l) => l.espera - l.desde));
+    if (falta <= 0) {
       await tentarNovamente(grupo, usadas);
+    } else if (grupo[0].rapida && falta < 60) {
+      // Não espera o agendador do próximo minuto: religa assim que der o tempo.
+      agendarRodada(falta);
     }
   }
 }
@@ -215,7 +219,7 @@ async function escalar(chave, grupo) {
   const texto = `ALERTA: ${g.paciente} não confirmou o remédio das ${g.hora} (${remedios}). Tentamos ligar ${g.tentativa} vezes. Por favor, entre em contato.`;
 
   try {
-    await enviarAlerta({ para: g.cuidador_telefone, texto });
+    await enviarSms({ para: g.cuidador_telefone, texto });
     marcar(ids, 'escalonada', ['sem_resposta', 'falhou']);
     falhasAlerta.delete(chave);
     console.log(`[escalonamento] cuidador ${g.cuidador_nome} avisado -> chamadas ${ids.join(',')} escalonadas`);
@@ -232,26 +236,77 @@ async function escalar(chave, grupo) {
   }
 }
 
-function iniciar() {
-  cron.schedule(
-    '* * * * *',
-    async () => {
-      if (rodando) return;
-      rodando = true;
+// Avisa o cuidador por SMS que o paciente confirmou, com a frase que ele falou ("tomei sim", "já"...).
+async function avisarConfirmacao(ids, fala) {
+  const m = ids.map(() => '?').join(',');
+  const linhas = db
+    .prepare(
+      `SELECT h.hora, med.nome AS medicamento, p.nome AS paciente, cd.telefone AS cuidador_telefone
+       FROM chamadas c
+       JOIN horarios h ON h.id = c.horario_id
+       JOIN medicamentos med ON med.id = h.medicamento_id
+       JOIN pacientes p ON p.id = med.paciente_id
+       JOIN cuidadores cd ON cd.id = p.cuidador_id
+       WHERE c.id IN (${m})
+       ORDER BY med.nome`
+    )
+    .all(...ids);
+  if (!linhas.length || !linhas[0].cuidador_telefone) return;
+
+  const g = linhas[0];
+  const remedios = linhas.map((l) => l.medicamento).join(', ');
+  const texto = `LembreMed: ${g.paciente} confirmou o remédio das ${g.hora} (${remedios}). Resposta: "${fala.slice(0, 100)}"`;
+  try {
+    await enviarSms({ para: g.cuidador_telefone, texto });
+    console.log(`[confirmação] cuidador avisado por SMS -> chamadas ${ids.join(',')}`);
+  } catch (e) {
+    console.error(`[confirmação] falha ao enviar o SMS de confirmação: ${e.message}`);
+  }
+}
+
+// Uma rodada de acompanhar + processar. Se for pedida no meio de outra, roda de novo logo em seguida.
+async function rodada() {
+  if (rodando) {
+    rodarDeNovo = true;
+    return;
+  }
+  rodando = true;
+  try {
+    do {
+      rodarDeNovo = false;
       try {
         await acompanhar();
         await processar();
       } catch (e) {
         console.error('Erro no escalonamento:', e);
-      } finally {
-        rodando = false;
       }
-    },
-    { timezone: config.timezone }
-  );
+    } while (rodarDeNovo);
+  } finally {
+    rodando = false;
+  }
+}
+
+// Agenda uma rodada extra daqui a `seg` segundos (fica só a mais próxima), além da rodada de cada minuto.
+function agendarRodada(seg) {
+  if (!iniciado) return;
+  const em = Date.now() + seg * 1000;
+  if (proximaRodada && proximaRodada.em <= em) return;
+  if (proximaRodada) clearTimeout(proximaRodada.timer);
+  proximaRodada = {
+    em,
+    timer: setTimeout(() => {
+      proximaRodada = null;
+      rodada();
+    }, seg * 1000),
+  };
+}
+
+function iniciar() {
+  iniciado = true;
+  cron.schedule('* * * * *', rodada, { timezone: config.timezone });
   console.log(
-    `Escalonamento ativo (até ${MAX} tentativas, intervalo de ${INTERVALO} min, alerta por ${config.alerta.canal})`
+    `Escalonamento ativo (até ${MAX} tentativas, intervalo de ${INTERVALO} min, recusa rápida religa em segundos, alerta por SMS)`
   );
 }
 
-module.exports = { iniciar, acompanhar, processar, registrarFim };
+module.exports = { iniciar, acompanhar, processar, registrarFim, avisarConfirmacao };

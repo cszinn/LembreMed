@@ -21,13 +21,10 @@ function agora(date = new Date()) {
 const buscarDevidos = db.prepare(`
   SELECT h.id AS horario_id, h.hora,
          m.nome AS medicamento, m.descricao,
-         p.id AS paciente_id, p.nome AS paciente, p.telefone,
-         coalesce(c.nome, p.cuidador_nome) AS cuidador_nome,
-         coalesce(c.telefone, p.cuidador_telefone) AS cuidador_telefone
+         p.id AS paciente_id, p.nome AS paciente, p.telefone
   FROM horarios h
   JOIN medicamentos m ON m.id = h.medicamento_id AND m.ativo = 1
   JOIN pacientes p ON p.id = m.paciente_id AND p.ativo = 1
-  LEFT JOIN cuidadores c ON c.id = p.cuidador_id
   WHERE h.ativo = 1 AND h.hora = ?
   ORDER BY p.id, m.nome
 `);
@@ -61,14 +58,23 @@ async function ligar(itens, hora) {
   }
 }
 
-// Varre o banco para o minuto informado (padrão: agora). Retorna quantas chamadas foram reservadas.
-async function varrer({ data, hora } = agora()) {
-  const devidos = buscarDevidos.all(hora);
+// Também olha os últimos minutos: se o servidor estava fora do ar, reiniciando ou o PC dormiu
+// exatamente no horário, a dose ainda é lembrada (com atraso) em vez de ser pulada em silêncio.
+// A reserva idempotente garante uma única ligação por horário e dia.
+const JANELA_ATRASO_MIN = 10;
+
+// Varre o banco para o minuto informado (padrão: agora) e os anteriores. Retorna quantas chamadas foram reservadas.
+async function varrer(referencia = new Date()) {
+  const devidos = [];
+  for (let atras = JANELA_ATRASO_MIN; atras >= 0; atras--) {
+    const { data, hora } = agora(new Date(referencia.getTime() - atras * 60 * 1000));
+    for (const d of buscarDevidos.all(hora)) devidos.push({ ...d, data });
+  }
 
   const novos = [];
   db.transaction(() => {
     for (const d of devidos) {
-      const info = reservar.run(d.horario_id, data);
+      const info = reservar.run(d.horario_id, d.data);
       if (info.changes === 1) novos.push({ ...d, chamada_id: info.lastInsertRowid });
     }
   })();
@@ -80,7 +86,7 @@ async function varrer({ data, hora } = agora()) {
   }
 
   for (const itens of porPaciente.values()) {
-    await ligar(itens, hora);
+    await ligar(itens, itens[0].hora);
   }
   return novos.length;
 }

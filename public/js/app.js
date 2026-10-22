@@ -87,7 +87,7 @@ async function api(url, { method = 'GET', body } = {}) {
   if (res.status === 204) return null;
   const data = await res.json().catch(() => ({}));
 
-  if (res.status === 401 && !url.startsWith('/auth/login') && !url.startsWith('/auth/cadastro')) {
+  if (res.status === 401 && !url.startsWith('/auth/google')) {
     fazerLogout(false);
     throw new Error('Sua sessão expirou. Faça login novamente.');
   }
@@ -154,10 +154,71 @@ let selecionadoId = localStorage.getItem('lembremed_paciente_id')
   : null;
 let filtroBusca = '';
 
+// ==================== LOGIN COM GOOGLE ====================
+
+function mostrarErroLogin(msg) {
+  const el = $('#erroLogin');
+  el.textContent = msg;
+  el.classList.toggle('d-none', !msg);
+}
+
+let googleIniciado = false;
+
+// Desenha o botão "Entrar com Google" com o ID do cliente que o servidor informa (GOOGLE_CLIENT_ID no .env)
+async function configurarLoginGoogle() {
+  if (googleIniciado) return;
+  const alvo = $('#botaoGoogle');
+  let clientId = null;
+  try {
+    ({ googleClientId: clientId } = await api('/auth/opcoes'));
+  } catch {
+    // tratado abaixo como "não configurado"
+  }
+  if (!clientId) {
+    alvo.innerHTML = '';
+    mostrarErroLogin('O login com Google ainda não foi configurado no servidor (GOOGLE_CLIENT_ID no .env).');
+    return;
+  }
+
+  // A biblioteca do Google carrega em paralelo (async): espera até 10 s por ela.
+  for (let i = 0; i < 50 && !window.google?.accounts?.id; i++) await new Promise((r) => setTimeout(r, 200));
+  if (!window.google?.accounts?.id) {
+    alvo.innerHTML = '';
+    mostrarErroLogin('Não foi possível carregar o login do Google. Verifique a internet e recarregue a página.');
+    return;
+  }
+
+  google.accounts.id.initialize({ client_id: clientId, callback: entrarComGoogle });
+  alvo.innerHTML = '';
+  google.accounts.id.renderButton(alvo, { theme: 'outline', size: 'large', shape: 'pill', text: 'signin_with', locale: 'pt-BR' });
+  googleIniciado = true;
+}
+
+// Chamado pelo Google com a credencial da conta escolhida; o servidor confere e devolve o token do painel
+async function entrarComGoogle({ credential }) {
+  mostrarErroLogin('');
+  try {
+    const res = await api('/auth/google', { method: 'POST', body: { credential } });
+    localStorage.setItem('lembremed_token', res.token);
+    cuidadorLogado = res.cuidador;
+    toast(`Bem-vindo(a), ${cuidadorLogado.nome}!`, 'success');
+    await atualizar();
+  } catch (e) {
+    mostrarErroLogin(e.message);
+  }
+}
+
+// Primeiro acesso: o celular que recebe os SMS é obrigatório
+function abrirCompletarCadastro() {
+  $('#completarNome').value = cuidadorLogado.nome || '';
+  bootstrap.Modal.getOrCreateInstance($('#modalCompletarCadastro')).show();
+}
+
 // Alternar entre Telas (Auth vs App Principal)
 function exibirTelaAuth() {
   $('#telaAuth').classList.remove('d-none');
   $('#appPrincipal').classList.add('d-none');
+  configurarLoginGoogle();
 }
 
 function exibirAppPrincipal() {
@@ -172,6 +233,8 @@ function fazerLogout(avisar = true) {
   pacienteAtual = null;
   selecionadoId = null;
   pacientes = [];
+  // Não entra de novo sozinho com a mesma conta do Google depois de sair
+  window.google?.accounts?.id?.disableAutoSelect();
   exibirTelaAuth();
   if (avisar) toast('Você saiu da sua conta.', 'info');
 }
@@ -197,8 +260,10 @@ function renderListaLateral() {
   if (badgeQtd) badgeQtd.textContent = pacientes.length;
 
   const termo = filtroBusca.toLowerCase().trim();
+  // Telefone é comparado só pelos dígitos: "(31) 9888" encontra "+55319888...".
+  const digitos = normalizarDigitos(termo);
   const filtrados = pacientes.filter(
-    (p) => p.nome.toLowerCase().includes(termo) || p.telefone.includes(termo)
+    (p) => p.nome.toLowerCase().includes(termo) || (digitos && normalizarDigitos(p.telefone).includes(digitos))
   );
 
   if (!filtrados.length) {
@@ -238,6 +303,48 @@ function renderListaLateral() {
     .join('');
 }
 
+// Explica em palavras o que aconteceu na ligação (coluna "Detalhe" do histórico)
+function detalheChamada(c) {
+  const disse = c.resposta ? `Disse: "${c.resposta}"` : '';
+  if (c.status === 'discando') return 'Ligação em andamento';
+  if (c.twilio_status === 'no-answer' && c.toque_seg !== null && c.toque_seg < 10) {
+    return `A rede recusou em ${c.toque_seg}s (o telefone não tocou)`;
+  }
+  if (c.twilio_status === 'no-answer') return 'Tocou e ninguém atendeu';
+  if (c.twilio_status === 'busy') return 'Telefone ocupado';
+  if (c.twilio_status === 'failed') return 'A operadora não completou a ligação';
+  if (c.status === 'falhou') return 'Ligação não foi feita (erro ao discar)';
+  if (c.status === 'confirmada') return disse || 'Confirmou';
+  if (c.twilio_status === 'completed') return disse || 'Atendeu, mas não respondeu';
+  return disse || '—';
+}
+
+// Status real da URA (simulação, ngrok no ar ou fora) e o resumo das ligações de hoje
+async function carregarStatus() {
+  const badge = $('#statusUra');
+  const resumo = $('#resumoHoje');
+  if (!badge || !resumo) return;
+  try {
+    const { sistema, hoje } = await api('/estatisticas');
+    let classe = 'bg-success-subtle text-success border border-success-subtle';
+    let texto = 'Operacional';
+    if (sistema.simulacao) {
+      classe = 'bg-warning-subtle text-warning-emphasis border border-warning-subtle';
+      texto = 'Simulação (não liga)';
+    } else if (!sistema.webhookOk) {
+      classe = 'bg-danger-subtle text-danger border border-danger-subtle';
+      texto = 'Fora do ar (ngrok?)';
+    }
+    badge.className = `badge ${classe}`;
+    badge.textContent = texto;
+    resumo.textContent = `Hoje: ${hoje.total} ligações, ${hoje.confirmadas} confirmadas, ${hoje.alertas} com alerta`;
+  } catch {
+    badge.className = 'badge bg-light text-muted border';
+    badge.textContent = 'Indisponível';
+    resumo.textContent = '';
+  }
+}
+
 // Renderização do Histórico de Chamadas
 async function carregarHistoricoChamadas(pacienteId) {
   const el = $('#historicoChamadasContainer');
@@ -260,6 +367,7 @@ async function carregarHistoricoChamadas(pacienteId) {
               <th>Medicamento</th>
               <th>Tentativa</th>
               <th>Status do Atendimento</th>
+              <th>Detalhe</th>
             </tr>
           </thead>
           <tbody>
@@ -272,11 +380,11 @@ async function carregarHistoricoChamadas(pacienteId) {
                 if (c.status === 'confirmada') {
                   badgeClass = 'bg-success';
                   icone = 'bi-check-circle-fill';
-                  label = 'Confirmou no Telefone (1)';
+                  label = 'Confirmou (disse "sim")';
                 } else if (c.status === 'sem_resposta') {
                   badgeClass = 'bg-warning text-dark';
                   icone = 'bi-telephone-x-fill';
-                  label = 'Sem resposta / Ocupado';
+                  label = 'Não confirmou';
                 } else if (c.status === 'falhou') {
                   badgeClass = 'bg-danger';
                   icone = 'bi-exclamation-octagon-fill';
@@ -284,7 +392,7 @@ async function carregarHistoricoChamadas(pacienteId) {
                 } else if (c.status === 'escalonada') {
                   badgeClass = 'bg-danger';
                   icone = 'bi-shield-fill-exclamation';
-                  label = 'Cuidador Alertado (SMS/Zap)';
+                  label = 'Cuidador avisado (SMS)';
                 } else if (c.status === 'discando') {
                   badgeClass = 'bg-info text-dark';
                   icone = 'bi-telephone-outbound';
@@ -302,6 +410,7 @@ async function carregarHistoricoChamadas(pacienteId) {
                       <i class="bi ${icone}"></i> ${label}
                     </span>
                   </td>
+                  <td class="small text-muted">${esc(detalheChamada(c))}</td>
                 </tr>`;
               })
               .join('')}
@@ -345,7 +454,7 @@ function renderPacientePrincipal(p) {
                 </h4>
                 <div class="med-voice-box mt-2">
                   <i class="bi bi-soundwave text-primary me-1 fs-6"></i>
-                  <strong>Roteiro falado pela assistente:</strong> "Pegue <em>${esc(m.descricao)}</em>"
+                  <strong>Roteiro falado pela assistente:</strong> "Está na hora do seu remédio: ${esc(m.nome)}, <em>${esc(m.descricao)}</em>. Você já tomou?"
                 </div>
               </div>
               
@@ -424,7 +533,7 @@ function renderPacientePrincipal(p) {
                   <i class="bi bi-telephone-fill text-primary"></i>
                   <span class="fw-semibold text-dark">${esc(fmtTel(p.telefone))}</span>
                 </span>
-                <a href="https://wa.me/55${normalizarDigitos(p.telefone)}" target="_blank" 
+                <a href="https://wa.me/${normalizarDigitos(p.telefone)}" target="_blank" rel="noopener"
                    class="btn btn-sm btn-outline-success py-0 px-2 rounded-pill small d-inline-flex align-items-center gap-1">
                   <i class="bi bi-whatsapp"></i> WhatsApp
                 </a>
@@ -562,6 +671,8 @@ async function atualizar() {
     cuidadorLogado = authRes.cuidador;
     renderCuidador();
     exibirAppPrincipal();
+    carregarStatus();
+    if (!cuidadorLogado.telefone) abrirCompletarCadastro();
 
     pacientes = await api('/pacientes');
 
@@ -607,55 +718,23 @@ async function atualizar() {
 
 // ==================== EVENTOS ====================
 
-// Formulário de Login
-$('#formLogin')?.addEventListener('submit', async (ev) => {
+// Primeiro acesso: salva o nome e o celular e libera o painel
+$('#formCompletarCadastro')?.addEventListener('submit', async (ev) => {
   ev.preventDefault();
   const form = ev.target;
-  const erroEl = form.querySelector('.erro-auth');
-  if (erroEl) erroEl.classList.add('d-none');
-
-  const dados = Object.fromEntries(new FormData(form));
+  const erroEl = form.querySelector('.erro-form');
+  erroEl.classList.add('d-none');
 
   try {
-    const res = await api('/auth/login', { method: 'POST', body: dados });
-    localStorage.setItem('lembremed_token', res.token);
+    const res = await api('/auth/perfil', { method: 'PUT', body: Object.fromEntries(new FormData(form)) });
     cuidadorLogado = res.cuidador;
-    toast(`Bem-vindo(a), ${cuidadorLogado.nome}!`, 'success');
+    fecharModal('modalCompletarCadastro');
     form.reset();
+    toast('Tudo pronto! Agora cadastre o seu paciente.', 'success');
     await atualizar();
   } catch (e) {
-    if (erroEl) {
-      erroEl.textContent = e.message;
-      erroEl.classList.remove('d-none');
-    } else {
-      toast(e.message, 'error');
-    }
-  }
-});
-
-// Formulário de Cadastro de Cuidador
-$('#formCadastro')?.addEventListener('submit', async (ev) => {
-  ev.preventDefault();
-  const form = ev.target;
-  const erroEl = form.querySelector('.erro-auth');
-  if (erroEl) erroEl.classList.add('d-none');
-
-  const dados = Object.fromEntries(new FormData(form));
-
-  try {
-    const res = await api('/auth/cadastro', { method: 'POST', body: dados });
-    localStorage.setItem('lembremed_token', res.token);
-    cuidadorLogado = res.cuidador;
-    toast(`Conta criada com sucesso! Olá, ${cuidadorLogado.nome}.`, 'success');
-    form.reset();
-    await atualizar();
-  } catch (e) {
-    if (erroEl) {
-      erroEl.textContent = e.message;
-      erroEl.classList.remove('d-none');
-    } else {
-      toast(e.message, 'error');
-    }
+    erroEl.textContent = e.message;
+    erroEl.classList.remove('d-none');
   }
 });
 
@@ -671,7 +750,6 @@ $('#btnAbrirPerfilCuidador')?.addEventListener('click', () => {
   if (!cuidadorLogado) return;
   $('#perfilCuidadorNome').value = cuidadorLogado.nome;
   $('#perfilCuidadorTelefone').value = fmtTel(cuidadorLogado.telefone);
-  $('#perfilCuidadorCanal').value = cuidadorLogado.canal_alerta || 'sms';
   
   const modal = new bootstrap.Modal($('#modalPerfilCuidador'));
   modal.show();
@@ -808,7 +886,10 @@ document.addEventListener('change', async (ev) => {
 // Submissão dos Formulários de Paciente e Medicamento
 document.addEventListener('submit', async (ev) => {
   const form = ev.target;
-  if (['formLogin', 'formCadastro', 'formPerfilCuidador'].includes(form.id)) return;
+  // getAttribute, e não form.id: os formulários de edição têm um campo name="id", e no navegador
+  // form.id devolve esse campo (não o id do formulário). Por isso "Salvar" na edição não fazia nada.
+  const formId = form.getAttribute('id');
+  if (['formPerfilCuidador', 'formCompletarCadastro'].includes(formId)) return;
 
   ev.preventDefault();
   const erroEl = form.querySelector('.erro-form');
@@ -816,7 +897,7 @@ document.addEventListener('submit', async (ev) => {
 
   try {
     // 1) Novo Paciente (apenas nome e telefone)
-    if (form.id === 'formNovoPaciente') {
+    if (formId === 'formNovoPaciente') {
       const dados = Object.fromEntries(new FormData(form));
       const novo = await api('/pacientes', { method: 'POST', body: dados });
       selecionadoId = novo.id;
@@ -829,7 +910,7 @@ document.addEventListener('submit', async (ev) => {
     }
 
     // 2) Editar Paciente (apenas nome e telefone)
-    else if (form.id === 'formEditarPaciente') {
+    else if (formId === 'formEditarPaciente') {
       const dados = Object.fromEntries(new FormData(form));
       const id = Number(dados.id);
       await api(`/pacientes/${id}`, {
@@ -837,7 +918,8 @@ document.addEventListener('submit', async (ev) => {
         body: {
           nome: dados.nome,
           telefone: dados.telefone,
-          ativo: Number(dados.ativo) || 1,
+          // Mantém o paciente pausado ao editar ("0" || 1 reativava sem querer).
+          ativo: dados.ativo === '0' ? 0 : 1,
         },
       });
       fecharModal('modalEditarPaciente');
@@ -846,7 +928,7 @@ document.addEventListener('submit', async (ev) => {
     }
 
     // 3) Novo Medicamento
-    else if (form.id === 'formNovoMedicamento') {
+    else if (formId === 'formNovoMedicamento') {
       const dados = Object.fromEntries(new FormData(form));
       await api(`/pacientes/${selecionadoId}/medicamentos`, {
         method: 'POST',
@@ -865,7 +947,7 @@ document.addEventListener('submit', async (ev) => {
     }
 
     // 4) Editar Medicamento
-    else if (form.id === 'formEditarMedicamento') {
+    else if (formId === 'formEditarMedicamento') {
       const dados = Object.fromEntries(new FormData(form));
       const id = Number(dados.id);
       await api(`/medicamentos/${id}`, {

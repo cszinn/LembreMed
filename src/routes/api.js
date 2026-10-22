@@ -2,6 +2,9 @@ const express = require('express');
 const db = require('../db');
 const { limpar, textoValido, normalizarTelefone, horaValida } = require('../validators');
 const { exigirAutenticacao } = require('./auth');
+const config = require('../config');
+const { agora } = require('../services/scheduler');
+const { webhookAcessivel } = require('../services/telephony');
 
 const router = express.Router();
 
@@ -68,7 +71,7 @@ function montarPaciente(id, cuidadorId) {
 
 // ---------- estatísticas do cuidador logado ----------
 
-router.get('/estatisticas', (req, res) => {
+router.get('/estatisticas', async (req, res) => {
   try {
     const cuidadorId = req.cuidador.id;
 
@@ -100,7 +103,8 @@ router.get('/estatisticas', (req, res) => {
         )
         .get(cuidadorId)?.total || 0;
 
-    const hoje = new Date().toISOString().slice(0, 10);
+    // Data no fuso do agendador (toISOString é UTC: depois das 21h já seria "amanhã").
+    const hoje = agora().data;
     const chamadasHoje =
       db
         .prepare(
@@ -117,7 +121,14 @@ router.get('/estatisticas', (req, res) => {
         )
         .get(cuidadorId, hoje) || { total: 0, confirmadas: 0, alertas: 0, discando: 0 };
 
+    // Status real da URA para o painel: em simulação não liga; no modo real depende do ngrok no ar.
+    const sistema = {
+      simulacao: config.dryRun,
+      webhookOk: config.dryRun ? null : await webhookAcessivel(),
+    };
+
     res.json({
+      sistema,
       cuidador: req.cuidador,
       pacientes: {
         total: pacientesStats.total || 0,
@@ -160,6 +171,7 @@ router.get('/pacientes/:id/chamadas', (req, res) => {
     const chamadas = db
       .prepare(
         `SELECT c.id, c.data, c.tentativa, c.status, c.criado_em, c.atualizado_em,
+                c.twilio_status, c.sip_code, c.toque_seg, c.resposta,
                 h.hora, m.nome AS medicamento
          FROM chamadas c
          JOIN horarios h ON h.id = c.horario_id
@@ -178,15 +190,17 @@ router.get('/pacientes/:id/chamadas', (req, res) => {
 
 // Cadastro de Paciente: vinculado automaticamente ao cuidador logado
 router.post('/pacientes', (req, res) => {
+  // Sem o celular do cuidador ninguém receberia os SMS de confirmação e de alerta deste paciente.
+  if (!req.cuidador.telefone) return erro(res, 400, 'Cadastre primeiro o seu celular (Editar Perfil) para receber os SMS.');
+
   const { dados, mensagem } = lerDadosPaciente(req.body || {});
   if (mensagem) return erro(res, 400, mensagem);
 
   const info = db
     .prepare(
-      `INSERT INTO pacientes (cuidador_id, nome, telefone, cuidador_nome, cuidador_telefone)
-       VALUES (?, ?, ?, ?, ?)`
+      'INSERT INTO pacientes (cuidador_id, nome, telefone) VALUES (?, ?, ?)'
     )
-    .run(req.cuidador.id, dados.nome, dados.telefone, req.cuidador.nome, req.cuidador.telefone);
+    .run(req.cuidador.id, dados.nome, dados.telefone);
 
   res.status(201).json(montarPaciente(info.lastInsertRowid, req.cuidador.id));
 });

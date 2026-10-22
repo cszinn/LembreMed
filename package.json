@@ -1,12 +1,11 @@
 {
   "name": "pex",
   "version": "1.0.0",
-  "description": "",
-  "main": "index.js",
+  "description": "LembreMed: URA que liga para o paciente na hora do remédio e avisa o cuidador por SMS",
   "scripts": {
     "start": "node src/server.js",
     "dev": "node --watch src/server.js",
-    "db:init": "node src/db/init.js",
+    "db:reset": "node src/db/reset.js",
     "db:seed": "node src/db/seed.js"
   },
   "keywords": [],
@@ -17,6 +16,7 @@
     "better-sqlite3": "^13.0.3",
     "dotenv": "^18.0.7",
     "express": "^5.3.0",
+    "google-auth-library": "^11.3.1",
     "node-cron": "^4.6.0",
     "twilio": "^6.1.2"
   }

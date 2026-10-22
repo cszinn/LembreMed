@@ -1,20 +1,19 @@
+-- Cuidadores entram só pela conta do Google (google_id = "sub" do Google).
+-- O celular que recebe os SMS é pedido no primeiro acesso, por isso começa vazio.
 CREATE TABLE IF NOT EXISTS cuidadores (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
-  nome TEXT NOT NULL,
+  google_id TEXT UNIQUE NOT NULL,
   email TEXT UNIQUE NOT NULL,
-  senha_hash TEXT NOT NULL,
-  telefone TEXT NOT NULL,
-  canal_alerta TEXT NOT NULL DEFAULT 'sms',
+  nome TEXT NOT NULL,
+  telefone TEXT,
   criado_em TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
 );
 
 CREATE TABLE IF NOT EXISTS pacientes (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
-  cuidador_id INTEGER REFERENCES cuidadores(id) ON DELETE CASCADE,
+  cuidador_id INTEGER NOT NULL REFERENCES cuidadores(id) ON DELETE CASCADE,
   nome TEXT NOT NULL,
   telefone TEXT NOT NULL,
-  cuidador_nome TEXT,
-  cuidador_telefone TEXT,
   ativo INTEGER NOT NULL DEFAULT 1,
   criado_em TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
 );
@@ -49,6 +48,8 @@ CREATE TABLE IF NOT EXISTS chamadas (
   sip_code INTEGER,
   duracao_seg INTEGER,
   toque_seg INTEGER,
+  -- Última frase que o paciente falou na ligação ("tomei sim", "ainda não"...)
+  resposta TEXT,
   criado_em TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
   atualizado_em TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
   UNIQUE (horario_id, data, tentativa)

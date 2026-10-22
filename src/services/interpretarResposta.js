@@ -1,10 +1,10 @@
 // Interpreta o que o paciente FALOU ao ser perguntado "já tomou o remédio?".
-// Devolve 'sim', 'nao' ou 'indefinido'.
+// Devolve 'sim', 'nao' ou 'indefinido'. Na ligação, só 'sim' confirma: 'nao' e 'indefinido'
+// (frase sem contexto, "sim... não") contam como NÃO e o sistema liga de novo mais tarde.
 //
 // Regras de segurança:
 //  - A negação é checada antes: "não tomei" contém "tomei", mas é um NÃO.
-//  - Se a fala tiver sinais de sim E de não ("sim... não"), devolve 'indefinido' e o sistema pergunta de novo.
-//  - Na dúvida nunca confirma: confirmar por engano é pior do que perguntar outra vez.
+//  - Na dúvida nunca confirma: confirmar por engano é pior do que ligar outra vez.
 
 function normalizar(texto) {
   return String(texto || '')

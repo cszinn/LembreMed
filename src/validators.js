@@ -2,21 +2,23 @@ const limpar = (v) => (typeof v === 'string' ? v.trim() : '');
 
 const textoValido = (v, max = 200) => v.length > 0 && v.length <= max;
 
+// Só aceita telefones do Brasil (o sistema liga e manda SMS pela conta da Twilio; número de outro
+// país seria custo e risco de abuso). Formato: DDD + fixo (8 dígitos, começa com 2 a 5)
+// ou celular (9 dígitos, começa com 9). Aceita "(31) 98888-7777", "031 98888-7777" e "+55 31 98888-7777".
 function normalizarTelefone(valor) {
   if (typeof valor !== 'string') return null;
-  const digitos = valor.replace(/\D/g, '');
-  let e164;
+  let digitos = valor.replace(/\D/g, '');
 
-  if (valor.trim().startsWith('+')) {
-    e164 = '+' + digitos;
-  } else if (digitos.length === 10 || digitos.length === 11) {
-    e164 = '+55' + digitos;
-  } else if ((digitos.length === 12 || digitos.length === 13) && digitos.startsWith('55')) {
-    e164 = '+' + digitos;
-  } else {
-    return null;
+  if (valor.trim().startsWith('+') || ((digitos.length === 12 || digitos.length === 13) && digitos.startsWith('55'))) {
+    if (!digitos.startsWith('55')) return null;
+    digitos = digitos.slice(2);
+  } else if (digitos.startsWith('0')) {
+    digitos = digitos.slice(1); // prefixo de interurbano: 031...
   }
-  return /^\+[1-9]\d{10,14}$/.test(e164) ? e164 : null;
+
+  const celular = /^[1-9]{2}9\d{8}$/.test(digitos);
+  const fixo = /^[1-9]{2}[2-5]\d{7}$/.test(digitos);
+  return celular || fixo ? '+55' + digitos : null;
 }
 
 function horaValida(hora) {

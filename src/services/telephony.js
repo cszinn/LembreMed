@@ -1,10 +1,26 @@
-﻿const twilio = require('twilio');
-const config = require('../config');
+﻿const config = require('../config');
+const { getClient } = require('./twilioClient');
 
-let client;
-function getClient() {
-  if (!client) client = twilio(config.twilio.accountSid, config.twilio.authToken);
-  return client;
+// Antes de discar, confirma que a Twilio vai conseguir buscar o roteiro (ngrok e servidor no ar).
+// Sem isso o paciente atende e ouve um erro da Twilio em inglês (aconteceu com 13 ligações).
+const VALIDADE_TESTE_MS = 60 * 1000;
+let ultimoTesteOk = 0;
+
+async function webhookAcessivel() {
+  if (Date.now() - ultimoTesteOk < VALIDADE_TESTE_MS) return true;
+  try {
+    const r = await fetch(`${config.baseUrl}/health`, {
+      headers: { 'ngrok-skip-browser-warning': '1' },
+      signal: AbortSignal.timeout(5000),
+    });
+    if (r.ok) {
+      ultimoTesteOk = Date.now();
+      return true;
+    }
+  } catch {
+    // fora do ar, tempo esgotado ou DNS: trata como inacessível
+  }
+  return false;
 }
 
 async function discar({ paciente, mensagem, chamadaIds }) {
@@ -16,6 +32,9 @@ async function discar({ paciente, mensagem, chamadaIds }) {
   }
 
   if (!config.baseUrl) throw new Error('BASE_URL não configurada no .env');
+  if (!(await webhookAcessivel())) {
+    throw new Error(`${config.baseUrl}/health não respondeu (ngrok ou servidor fora do ar?); ligação não feita`);
+  }
 
   const ligacao = await getClient().calls.create({
     to: paciente.telefone,
@@ -29,4 +48,4 @@ async function discar({ paciente, mensagem, chamadaIds }) {
   return { callSid: ligacao.sid };
 }
 
-module.exports = { discar };
+module.exports = { discar, webhookAcessivel };

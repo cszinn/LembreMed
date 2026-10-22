@@ -1,25 +1,29 @@
 const crypto = require('crypto');
+const fs = require('fs');
+const path = require('path');
+const config = require('../config');
 
-// Chave secreta para assinar os tokens (lê de variável ou gera uma padrão consistente)
-const SECRET = process.env.JWT_SECRET || 'lembremed_secret_cuidador_auth_key_2026';
-
-function hashSenha(senha) {
-  if (!senha || typeof senha !== 'string') {
-    throw new Error('Senha deve ser uma string não vazia.');
+// Sessão do painel depois do login com Google: token assinado com HMAC, válido por 7 dias.
+// Chave que assina os tokens: JWT_SECRET do .env ou, se vazio, uma aleatória gerada uma vez
+// e guardada em data/.jwt_secret (fora do git), para não depender de um segredo fixo no código.
+function carregarSegredo() {
+  if (process.env.JWT_SECRET) return process.env.JWT_SECRET;
+  const arquivo = path.join(path.dirname(config.dbPath), '.jwt_secret');
+  try {
+    const salvo = fs.readFileSync(arquivo, 'utf8').trim();
+    if (salvo) return salvo;
+  } catch {
+    // ainda não existe: gera abaixo
   }
-  const salt = crypto.randomBytes(16).toString('hex');
-  const hash = crypto.scryptSync(senha, salt, 64).toString('hex');
-  return `${salt}:${hash}`;
+  const novo = crypto.randomBytes(48).toString('hex');
+  fs.mkdirSync(path.dirname(arquivo), { recursive: true });
+  fs.writeFileSync(arquivo, novo, { mode: 0o600 });
+  return novo;
 }
+const SECRET = carregarSegredo();
 
-function verificarSenha(senha, senhaHash) {
-  if (!senha || !senhaHash || !senhaHash.includes(':')) return false;
-  const [salt, hashOriginal] = senhaHash.split(':');
-  const hashTentativa = crypto.scryptSync(senha, salt, 64).toString('hex');
-  const bufOriginal = Buffer.from(hashOriginal, 'hex');
-  const bufTentativa = Buffer.from(hashTentativa, 'hex');
-  if (bufOriginal.length !== bufTentativa.length) return false;
-  return crypto.timingSafeEqual(bufOriginal, bufTentativa);
+function assinar(b64Payload) {
+  return crypto.createHmac('sha256', SECRET).update(b64Payload).digest('base64url');
 }
 
 function gerarToken(cuidador) {
@@ -30,21 +34,17 @@ function gerarToken(cuidador) {
     exp: Date.now() + 7 * 24 * 60 * 60 * 1000, // 7 dias
   };
   const b64Payload = Buffer.from(JSON.stringify(payload)).toString('base64url');
-  const hmac = crypto.createHmac('sha256', SECRET);
-  hmac.update(b64Payload);
-  const assinatura = hmac.digest('base64url');
-  return `${b64Payload}.${assinatura}`;
+  return `${b64Payload}.${assinar(b64Payload)}`;
 }
 
 function verificarToken(token) {
   if (!token || typeof token !== 'string' || !token.includes('.')) return null;
   const [b64Payload, assinatura] = token.split('.');
-  
-  const hmac = crypto.createHmac('sha256', SECRET);
-  hmac.update(b64Payload);
-  const assinaturaEsperada = hmac.digest('base64url');
 
-  if (assinatura !== assinaturaEsperada) return null;
+  // Comparação em tempo constante: não revela quantos caracteres da assinatura estão certos.
+  const recebida = Buffer.from(assinatura || '');
+  const esperada = Buffer.from(assinar(b64Payload));
+  if (recebida.length !== esperada.length || !crypto.timingSafeEqual(recebida, esperada)) return null;
 
   try {
     const payload = JSON.parse(Buffer.from(b64Payload, 'base64url').toString('utf8'));
@@ -56,8 +56,6 @@ function verificarToken(token) {
 }
 
 module.exports = {
-  hashSenha,
-  verificarSenha,
   gerarToken,
   verificarToken,
 };

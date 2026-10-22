@@ -5,16 +5,10 @@ const config = require('../config');
 const { montarMensagem } = require('../services/mensagem');
 const validarAssinaturaTwilio = require('../middleware/twilioAssinatura');
 const { interpretarFala, DICAS } = require('../services/interpretarResposta');
-const { registrarFim } = require('../services/escalonamento');
+const { registrarFim, avisarConfirmacao } = require('../services/escalonamento');
 
 const router = express.Router();
-const VOZ = { voice: 'Polly.Vitoria', language: 'pt-BR' };
-
-let client;
-function getClient() {
-  if (!client) client = twilio(config.twilio.accountSid, config.twilio.authToken);
-  return client;
-}
+const VOZ = { voice: config.voz, language: 'pt-BR' };
 
 // Só aceita requisições realmente assinadas pela Twilio (ver middleware/twilioAssinatura.js).
 router.use(validarAssinaturaTwilio);
@@ -26,15 +20,17 @@ function lerIds(req) {
     .filter((n) => Number.isInteger(n) && n > 0);
 }
 
-function atualizar(ids, status) {
+// Muda o status só das chamadas que ainda estão em um dos status "de" (nunca sobrescreve um resultado final).
+function atualizar(ids, status, de = ['discando']) {
   if (!ids.length) return 0;
   const marcadores = ids.map(() => '?').join(',');
+  const estados = de.map(() => '?').join(',');
   return db
     .prepare(
       `UPDATE chamadas SET status = ?, atualizado_em = datetime('now','localtime')
-       WHERE id IN (${marcadores}) AND status = 'discando'`
+       WHERE id IN (${marcadores}) AND status IN (${estados})`
     )
-    .run(status, ...ids).changes;
+    .run(status, ...ids, ...de).changes;
 }
 
 const consultarPorCallSid = db.prepare(`
@@ -71,27 +67,39 @@ function falhaTemporaria() {
   return r;
 }
 
-// Quantas vezes perguntamos na mesma ligação antes de desistir (1ª pergunta + 1 repetição).
-const MAX_PERGUNTAS = 2;
-
 // Cria o <Gather> que escuta a fala do paciente (pt-BR). Não há resposta por teclado.
-function criarGather(resposta, lista, pergunta = 1) {
+// experimental_utterances é o modelo da Twilio para respostas curtas ("sim", "já tomei"); com ele o
+// speechTimeout precisa ser um número: 1 s de pausa já encerra a escuta, para a resposta chegar logo.
+function criarGather(resposta, lista) {
   return resposta.gather({
     input: 'speech',
     language: 'pt-BR',
-    speechTimeout: 'auto',
+    speechModel: 'experimental_utterances',
+    speechTimeout: 1,
     timeout: 10,
     hints: DICAS,
-    action: `${config.baseUrl}/twilio/digito?ids=${lista}&t=${pergunta}`,
+    action: `${config.baseUrl}/twilio/digito?ids=${lista}`,
     method: 'POST',
   });
 }
 
-// Como mudamos o painel da Twilio para /atendimento na sua tentativa anterior,
-// Adicionamos as duas rotas para capturarem a chamada sem dar Erro 404
+// /voz: roteiro das ligações que o sistema faz. /atendimento: URL configurada no número da Twilio
+// (console) para quando alguém liga PARA o sistema.
 router.post(['/voz', '/atendimento'], async (req, res) => {
   const resposta = new twilio.twiml.VoiceResponse();
   try {
+    if (req.body.Direction === 'inbound') {
+      // Alguém ligou PARA o número do sistema (ex.: o paciente retornando uma ligação perdida).
+      // Antes ouvia "vamos ligar novamente em instantes", o que não acontece.
+      console.log('[twilio] ligação recebida no número do sistema; explicando e encerrando');
+      resposta.say(
+        VOZ,
+        'Olá! Aqui é o LembreMed, o lembrete de remédios por telefone. Nós ligamos para você nos horários dos seus remédios. Até logo.'
+      );
+      resposta.hangup();
+      return enviar(res, resposta);
+    }
+
     const itens = await buscarItens(req.body.CallSid);
 
     if (!itens.length) {
@@ -106,10 +114,7 @@ router.post(['/voz', '/atendimento'], async (req, res) => {
     console.log(`[twilio] atenderam: chamadas ${lista}`);
 
     const { introducao, pergunta } = montarMensagem(itens[0].paciente, itens);
-    const gather = criarGather(resposta, lista, 1);
-    gather.say(VOZ, introducao);
-    gather.pause({ length: 1 });
-    gather.say(VOZ, pergunta);
+    criarGather(resposta, lista).say(VOZ, `${introducao} ${pergunta}`);
 
     resposta.redirect({ method: 'POST' }, `${config.baseUrl}/twilio/sem-digito?ids=${lista}`);
 
@@ -122,16 +127,25 @@ router.post(['/voz', '/atendimento'], async (req, res) => {
 });
 
 // Decide o que o paciente respondeu, a partir da fala transcrita pela Twilio.
-// Segurança: só "sim" confirma. Fala ambígua, vazia ou com confiança baixa NUNCA confirma.
+// Só um "sim" claro confirma. Qualquer outra frase (um "não", algo sem contexto, fala misturada ou
+// um "sim" com confiança baixa) conta como NÃO: a dose fica sem confirmação e o sistema liga de novo.
 function lerResposta(body) {
   const fala = String(body.SpeechResult || '').trim();
-  if (!fala) return { resultado: 'indefinido', origem: 'sem fala' };
+  if (!fala) return { resultado: 'nao', fala, origem: 'sem fala' };
 
   const confianca = body.Confidence === undefined || body.Confidence === '' ? 1 : Number(body.Confidence);
-  let resultado = interpretarFala(fala);
-  // Um "não" com confiança baixa é inofensivo (só liga de novo). Um "sim" com confiança baixa não pode confirmar.
-  if (resultado === 'sim' && !(confianca >= config.confiancaMinimaVoz)) resultado = 'indefinido';
-  return { resultado, origem: `fala "${fala}" (confiança ${Number.isFinite(confianca) ? confianca.toFixed(2) : '?'})` };
+  const sim = interpretarFala(fala) === 'sim' && confianca >= config.confiancaMinimaVoz;
+  return {
+    resultado: sim ? 'sim' : 'nao',
+    fala,
+    origem: `fala "${fala}" (confiança ${Number.isFinite(confianca) ? confianca.toFixed(2) : '?'})`,
+  };
+}
+
+// Guarda a última frase que o paciente falou, para o histórico do painel.
+function guardarResposta(ids, fala) {
+  const marcadores = ids.map(() => '?').join(',');
+  db.prepare(`UPDATE chamadas SET resposta = ? WHERE id IN (${marcadores})`).run(fala.slice(0, 200), ...ids);
 }
 
 router.post('/digito', (req, res) => {
@@ -143,41 +157,35 @@ router.post('/digito', (req, res) => {
     return enviar(res, falhaTemporaria());
   }
 
-  const pergunta = Math.max(1, Number(req.query.t) || 1);
-  const { resultado, origem } = lerResposta(req.body);
+  const { resultado, fala, origem } = lerResposta(req.body);
   console.log(`[twilio] chamadas ${ids.join(',')} | ${origem} -> ${resultado}`);
+  if (fala) guardarResposta(ids, fala);
 
   if (resultado === 'sim') {
-    atualizar(ids, 'confirmada');
+    // Também aceita "sem_resposta": se o paciente desligar logo após dizer "sim", o aviso de fim
+    // da ligação pode chegar antes desta resposta e a confirmação não pode se perder.
+    const confirmadas = atualizar(ids, 'confirmada', ['discando', 'sem_resposta']);
     console.log(`[twilio] chamadas ${ids.join(',')} CONFIRMADAS`);
-    resposta.say(VOZ, 'Obrigado! Confirmação recebida. Tenha um ótimo dia.');
-    resposta.hangup();
-  } else if (resultado === 'nao') {
-    // "Ainda não tomei": não confirma. Fica sem_resposta e o escalonamento liga de novo
-    // (ou avisa o cuidador quando as tentativas acabarem).
-    atualizar(ids, 'sem_resposta');
-    resposta.say(VOZ, 'Tudo bem. Daqui a pouco entramos em contato de novo. Até logo.');
-    resposta.hangup();
-  } else if (pergunta < MAX_PERGUNTAS) {
-    // Não entendeu: pergunta mais uma vez, de forma curta.
-    const lista = ids.join(',');
-    const gather = criarGather(resposta, lista, pergunta + 1);
-    gather.say(VOZ, 'Desculpe, não entendi. Você já tomou o remédio? Diga sim ou não.');
-    resposta.redirect({ method: 'POST' }, `${config.baseUrl}/twilio/sem-digito?ids=${lista}`);
+    // SMS ao cuidador com a frase do paciente. Só na 1ª vez (a Twilio pode repetir o webhook) e sem
+    // atrasar a resposta da ligação: avisarConfirmacao trata os próprios erros.
+    if (confirmadas) avisarConfirmacao(ids, fala);
+    resposta.say(VOZ, 'Obrigado! Até logo.');
   } else {
+    // Não confirma: fica sem_resposta e o escalonamento liga de novo (ou avisa o cuidador quando as
+    // tentativas acabarem). Não pergunta outra vez, para a ligação ser curta.
     atualizar(ids, 'sem_resposta');
-    resposta.say(VOZ, 'Não conseguimos entender a sua resposta. Até logo.');
-    resposta.hangup();
+    resposta.say(VOZ, 'Tudo bem. Não esqueça de tomar o seu remédio. Até logo.');
   }
+  resposta.hangup();
   enviar(res, resposta);
 });
 
 router.post('/sem-digito', (req, res) => {
   const ids = lerIds(req);
   atualizar(ids, 'sem_resposta');
-  console.log(`[twilio] atendeu mas não apertou nada -> chamadas ${ids.join(',')} sem_resposta`);
+  console.log(`[twilio] atendeu mas não respondeu -> chamadas ${ids.join(',')} sem_resposta`);
   const resposta = new twilio.twiml.VoiceResponse();
-  resposta.say(VOZ, 'Não recebemos a sua resposta. Até logo.');
+  resposta.say(VOZ, 'Não ouvi a sua resposta. Até logo.');
   resposta.hangup();
   enviar(res, resposta);
 });

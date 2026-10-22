@@ -8,6 +8,8 @@ const scheduler = require('./services/scheduler');
 const escalonamento = require('./services/escalonamento');
 
 const app = express();
+// O ngrok repassa as requisições pela máquina local; assim req.ip é o IP real de quem acessa.
+app.set('trust proxy', 'loopback');
 
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
@@ -38,6 +40,9 @@ app.listen(config.port, (err) => {
     process.exit(1);
   }
   console.log(`Servidor em http://localhost:${config.port} (DRY_RUN=${config.dryRun})`);
+  if (!config.google.clientId) {
+    console.warn('[login] Configure GOOGLE_CLIENT_ID no .env: sem ele ninguém entra no painel.');
+  }
   scheduler.iniciar();
   escalonamento.iniciar();
 });
