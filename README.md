@@ -28,7 +28,7 @@ O cuidador recebe na hora um SMS: *"LembreMed: Dona Maria confirmou o remédio d
 
 > Projeto desenvolvido como Projeto de Extensão (PEX).
 
-**Sumário:** [Instalar em um PC](#-instalar-em-um-pc-novo) · [Uso no dia a dia](#-uso-no-dia-a-dia) · [Levar para outro PC](#-levar-para-outro-pc-com-os-dados) · [Problemas comuns](#-problemas-comuns) · [Contas (configuração única)](#-configuração-única-das-contas) · [Comandos](#-comandos) · [Variáveis](#-variáveis-de-ambiente-env) · [Como funciona](#-como-funciona) · [Estrutura](#-estrutura)
+**Sumário:** [Instalar em um PC](#-instalar-em-um-pc-novo) · [Uso no dia a dia](#-uso-no-dia-a-dia) · [Levar para outro PC](#-levar-para-outro-pc-com-os-dados) · [Problemas comuns](#-problemas-comuns) · [Limitações conhecidas](#-limitações-conhecidas) · [Contas (configuração única)](#-configuração-única-das-contas) · [Comandos](#-comandos) · [Variáveis](#-variáveis-de-ambiente-env) · [Como funciona](#-como-funciona) · [Estrutura](#-estrutura)
 
 ---
 
@@ -174,10 +174,42 @@ Sem copiar a pasta `data`, o sistema começa vazio: é só entrar com o Google e
 | Botão do Google dá erro ("origin", "acesso bloqueado") | O endereço do painel precisa estar em **Origens JavaScript autorizadas** no Google Cloud (veja [Google](#google-login-do-painel)). Depois de mudar, espere uns 5 minutos. |
 | O painel mostra **Simulação (não liga)** | `DRY_RUN=true`. Rode `npm run configurar` e responda `s` em "ligar de verdade", depois `npm start` de novo. |
 | A ligação não acontece no horário | Confira se o paciente não está pausado, se o horário está cadastrado no remédio certo e se o status da URA é *Operacional*. |
-| O telefone não toca nas primeiras tentativas (histórico: "A rede recusou em 2s") | Acontece com algumas linhas no Brasil; o sistema religa sozinho em segundos. Se **sempre** recusar, veja no celular se há bloqueio de chamadas desconhecidas, internacionais ou de spam. |
+| O telefone não toca e o histórico mostra "A rede recusou em 3s" (várias vezes seguidas) | Em linhas **Vivo** é o **Vivo Anti Spam** barrando a ligação na rede, antes do celular (nem aparece chamada perdida). O sistema religa sozinho em segundos; para testar sem o bloqueio, veja [Limitações conhecidas](#-limitações-conhecidas). |
 | O paciente disse "sim" mas não confirmou | Veja no histórico a frase que o sistema entendeu. Respostas curtas e claras ("sim", "já tomei") funcionam melhor. |
 | O SMS não chegou | Veja em [console.twilio.com](https://console.twilio.com/) > **Monitor > Logs > Messaging** e confira o saldo. Teste com `node src/testar-alerta.js +5531999999999`. |
 | Quero apagar tudo e começar do zero | Desligue o LembreMed e rode `npm run db:reset -- --confirmar`. |
+
+---
+
+## 🚧 Limitações conhecidas
+
+### Vivo Anti Spam bloqueia parte das ligações
+
+A Vivo tem um filtro, o **Vivo Anti Spam**, que fica **dentro da rede da operadora** e vem **ativado automaticamente em todas as linhas móveis**. Ele analisa o comportamento de quem liga e barra ligações com cara de automáticas ou em massa **antes de chegarem ao celular**. As ligações do LembreMed são automáticas, saem de um número dos EUA (+1) e se repetem em poucos minutos quando o paciente não confirma: exatamente o perfil que o filtro procura.
+
+**Como aparece:** várias ligações seguidas são recusadas em uns 3 segundos, com o código **SIP 480**, e de vez em quando uma passa. No histórico do painel aparece "A rede recusou em 3s", e **no celular não aparece nenhuma chamada perdida**. Nos testes de outubro de 2026, isso aconteceu com só duas das linhas do grupo, e a que foi verificada é Vivo; as demais linhas tocaram normalmente. O sistema religa sozinho em segundos e, se todas falharem, o cuidador recebe o SMS de alerta normalmente: o problema é só a ligação não chegar.
+
+**Para testar sem o bloqueio** (na linha Vivo que vai receber as ligações):
+
+| Desativar | Reativar depois |
+| --- | --- |
+| SMS com a palavra **DESATIVAR** para **5050** | SMS com a palavra **ANTISPAM** para **5050** |
+| ou: app **Vivo** > **Modo Seguro** > desativar | ou: pelo mesmo menu do app |
+| ou: Central de Atendimento Vivo, **10315** | |
+
+A Vivo informa que a mudança leva **até 24 horas** para valer. Com o filtro desligado, a linha volta a receber ligações de telemarketing.
+
+**Na apresentação:** use um celular de outra operadora, ou uma linha Vivo com o Anti Spam desativado, e evite ligar várias vezes seguidas para o mesmo número logo antes.
+
+**Em um uso real:** não dá para pedir a cada paciente que desative o filtro. A própria Vivo informa que **não bloqueia ligações com "Origem Verificada"** (padrão STIR/SHAKEN, que comprova quem está ligando). Isso exige ligar de um **número brasileiro** de uma empresa participante, o que na Twilio pede cadastro com **CNPJ**. Fica como próximo passo para levar o projeto além do protótipo.
+
+Fontes: [Vivo, Anti Spam](https://vivo.com.br/para-voce/modo-seguro/anti-spam) · [Tecnoblog](https://tecnoblog.net/noticias/vivo-libera-sistema-anti-spam-gratis-para-todos-veja-como-ativar/) · [Teletime](https://teletime.com.br/14/08/2026/anatel-decide-que-vivo-anti-spam-e-legal-e-recomenda-modelo/)
+
+### Outras
+
+- **O PC precisa ficar ligado.** Sem hospedagem em nuvem, o LembreMed só liga enquanto o `npm start` estiver rodando.
+- **Aviso do ngrok:** quem abre o painel pela primeira vez vê uma página do ngrok pedindo para clicar em **Visit Site**. É do plano grátis do ngrok e só some hospedando em outro lugar.
+- **O link do painel é aberto:** qualquer pessoa com o endereço entra com uma conta Google e pode cadastrar pacientes, usando o crédito da Twilio. Compartilhe o link só com quem vai usar.
 
 ---
 
@@ -374,6 +406,7 @@ Cada chamada também guarda `twilio_status`, `sip_code`, `duracao_seg`, `toque_s
 - [ ] Relatório de adesão ao tratamento (doses confirmadas por semana)
 - [ ] Termo de consentimento (LGPD)
 - [ ] Hospedar em nuvem, para funcionar sem um PC ligado
+- [ ] Ligar de um número brasileiro com "Origem Verificada" (exige CNPJ), para não ser barrado por filtros anti-spam como o da Vivo
 
 ## 📄 Licença
 
