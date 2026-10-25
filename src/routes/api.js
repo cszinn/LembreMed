@@ -27,6 +27,15 @@ function lerAtivo(body, atual) {
   return body.ativo === true || body.ativo === 1 ? 1 : 0;
 }
 
+// Minutos para religar e confirmar quando o paciente atende e ainda não tomou (1 a 60).
+// Devolve `atual` se não veio no pedido, ou null se veio inválido.
+function lerMinutosReligar(body, atual) {
+  if (body.minutos_religar === undefined || body.minutos_religar === '') return atual;
+  const n = Number(body.minutos_religar);
+  return Number.isInteger(n) && n >= 1 && n <= 60 ? n : null;
+}
+const MINUTOS_INVALIDOS = 'Tempo para religar inválido: escolha de 1 a 60 minutos.';
+
 function lerDadosPaciente(body) {
   const dados = {
     nome: limpar(body.nome),
@@ -170,7 +179,7 @@ router.get('/pacientes/:id/chamadas', (req, res) => {
 
     const chamadas = db
       .prepare(
-        `SELECT c.id, c.data, c.tentativa, c.status, c.criado_em, c.atualizado_em,
+        `SELECT c.id, c.data, c.tentativa, c.tipo, c.status, c.atendida, c.caixa_postal, c.criado_em, c.atualizado_em,
                 c.twilio_status, c.sip_code, c.toque_seg, c.resposta,
                 h.hora, m.nome AS medicamento
          FROM chamadas c
@@ -193,19 +202,22 @@ router.post('/pacientes', (req, res) => {
   // Sem o celular do cuidador ninguém receberia os SMS de confirmação e de alerta deste paciente.
   if (!req.cuidador.telefone) return erro(res, 400, 'Cadastre primeiro o seu celular (Editar Perfil) para receber os SMS.');
 
-  const { dados, mensagem } = lerDadosPaciente(req.body || {});
+  const body = req.body || {};
+  const { dados, mensagem } = lerDadosPaciente(body);
   if (mensagem) return erro(res, 400, mensagem);
+  const minutos = lerMinutosReligar(body, 5);
+  if (minutos === null) return erro(res, 400, MINUTOS_INVALIDOS);
 
   const info = db
     .prepare(
-      'INSERT INTO pacientes (cuidador_id, nome, telefone) VALUES (?, ?, ?)'
+      'INSERT INTO pacientes (cuidador_id, nome, telefone, minutos_religar) VALUES (?, ?, ?, ?)'
     )
-    .run(req.cuidador.id, dados.nome, dados.telefone);
+    .run(req.cuidador.id, dados.nome, dados.telefone, minutos);
 
   res.status(201).json(montarPaciente(info.lastInsertRowid, req.cuidador.id));
 });
 
-// Atualização de Paciente: altera apenas os dados do paciente (nome, telefone e ativo)
+// Atualização de Paciente: nome, telefone, ativo e tempo para religar (o que não vier no pedido fica igual)
 router.put('/pacientes/:id', (req, res) => {
   const existente = db.prepare('SELECT * FROM pacientes WHERE id = ? AND cuidador_id = ?').get(req.id, req.cuidador.id);
   if (!existente) return erro(res, 404, 'Paciente não encontrado.');
@@ -213,14 +225,16 @@ router.put('/pacientes/:id', (req, res) => {
   const body = req.body || {};
   const { dados, mensagem } = lerDadosPaciente(body);
   if (mensagem) return erro(res, 400, mensagem);
+  const minutos = lerMinutosReligar(body, existente.minutos_religar);
+  if (minutos === null) return erro(res, 400, MINUTOS_INVALIDOS);
 
   const ativo = lerAtivo(body, existente.ativo);
 
   db.prepare(
-    `UPDATE pacientes 
-     SET nome = ?, telefone = ?, ativo = ? 
+    `UPDATE pacientes
+     SET nome = ?, telefone = ?, ativo = ?, minutos_religar = ?
      WHERE id = ? AND cuidador_id = ?`
-  ).run(dados.nome, dados.telefone, ativo, req.id, req.cuidador.id);
+  ).run(dados.nome, dados.telefone, ativo, minutos, req.id, req.cuidador.id);
 
   res.json(montarPaciente(req.id, req.cuidador.id));
 });

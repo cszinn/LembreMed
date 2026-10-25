@@ -2,10 +2,10 @@ const express = require('express');
 const twilio = require('twilio');
 const db = require('../db');
 const config = require('../config');
-const { montarMensagem } = require('../services/mensagem');
+const { montarMensagem, respostaSemConfirmar } = require('../services/mensagem');
 const validarAssinaturaTwilio = require('../middleware/twilioAssinatura');
-const { interpretarFala, DICAS } = require('../services/interpretarResposta');
-const { registrarFim, avisarConfirmacao } = require('../services/escalonamento');
+const { interpretarFala, ehCaixaPostal, DICAS } = require('../services/interpretarResposta');
+const { registrarFim, avisarConfirmacao, minutosParaReligar } = require('../services/escalonamento');
 
 const router = express.Router();
 const VOZ = { voice: config.voz, language: 'pt-BR' };
@@ -34,7 +34,7 @@ function atualizar(ids, status, de = ['discando']) {
 }
 
 const consultarPorCallSid = db.prepare(`
-  SELECT c.id, m.nome AS medicamento, m.descricao, p.nome AS paciente
+  SELECT c.id, c.tipo, m.nome AS medicamento, m.descricao, p.nome AS paciente
   FROM chamadas c
   JOIN horarios h ON h.id = c.horario_id
   JOIN medicamentos m ON m.id = h.medicamento_id
@@ -110,12 +110,14 @@ router.post(['/voz', '/atendimento'], async (req, res) => {
       return enviar(res, falhaTemporaria());
     }
 
-    const lista = itens.map((i) => i.id).join(',');
-    console.log(`[twilio] atenderam: chamadas ${lista}`);
+    const ids = itens.map((i) => i.id);
+    const lista = ids.join(',');
+    const tipo = itens[0].tipo;
+    console.log(`[twilio] atenderam (${tipo === 'lembrete' ? 'lembrete' : 'confirmação'}): chamadas ${lista}`);
+    // Marca como atendida: se o paciente ainda não tomou, a próxima ligação é só de confirmação.
+    db.prepare(`UPDATE chamadas SET atendida = 1 WHERE id IN (${ids.map(() => '?').join(',')})`).run(...ids);
 
-    const { introducao, pergunta } = montarMensagem(itens[0].paciente, itens);
-    criarGather(resposta, lista).say(VOZ, `${introducao} ${pergunta}`);
-
+    criarGather(resposta, lista).say(VOZ, montarMensagem(itens[0].paciente, itens, tipo));
     resposta.redirect({ method: 'POST' }, `${config.baseUrl}/twilio/sem-digito?ids=${lista}`);
 
     enviar(res, resposta);
@@ -158,8 +160,19 @@ router.post('/digito', (req, res) => {
   }
 
   const { resultado, fala, origem } = lerResposta(req.body);
-  console.log(`[twilio] chamadas ${ids.join(',')} | ${origem} -> ${resultado}`);
   if (fala) guardarResposta(ids, fala);
+
+  // Quem "atendeu" foi a caixa postal: desliga sem deixar recado e conta como NÃO atendida, para a
+  // próxima ligação repetir o lembrete completo (o paciente não ouviu nada).
+  if (fala && ehCaixaPostal(fala)) {
+    console.log(`[twilio] chamadas ${ids.join(',')} | caixa postal ("${fala}") -> conta como não atendida`);
+    const m = ids.map(() => '?').join(',');
+    db.prepare(`UPDATE chamadas SET atendida = 0, caixa_postal = 1 WHERE id IN (${m})`).run(...ids);
+    atualizar(ids, 'sem_resposta');
+    resposta.hangup();
+    return enviar(res, resposta);
+  }
+  console.log(`[twilio] chamadas ${ids.join(',')} | ${origem} -> ${resultado}`);
 
   if (resultado === 'sim') {
     // Também aceita "sem_resposta": se o paciente desligar logo após dizer "sim", o aviso de fim
@@ -171,10 +184,11 @@ router.post('/digito', (req, res) => {
     if (confirmadas) avisarConfirmacao(ids, fala);
     resposta.say(VOZ, 'Obrigado! Até logo.');
   } else {
-    // Não confirma: fica sem_resposta e o escalonamento liga de novo (ou avisa o cuidador quando as
-    // tentativas acabarem). Não pergunta outra vez, para a ligação ser curta.
+    // Ainda não tomou: fica sem_resposta e o escalonamento liga só para confirmar depois dos minutos
+    // escolhidos para o paciente (ou avisa o cuidador quando as tentativas acabarem). Não pergunta
+    // outra vez nesta ligação, para ela ser curta.
     atualizar(ids, 'sem_resposta');
-    resposta.say(VOZ, 'Tudo bem. Não esqueça de tomar o seu remédio. Até logo.');
+    resposta.say(VOZ, respostaSemConfirmar(minutosParaReligar(ids), false));
   }
   resposta.hangup();
   enviar(res, resposta);
@@ -185,7 +199,7 @@ router.post('/sem-digito', (req, res) => {
   atualizar(ids, 'sem_resposta');
   console.log(`[twilio] atendeu mas não respondeu -> chamadas ${ids.join(',')} sem_resposta`);
   const resposta = new twilio.twiml.VoiceResponse();
-  resposta.say(VOZ, 'Não ouvi a sua resposta. Até logo.');
+  resposta.say(VOZ, respostaSemConfirmar(ids.length ? minutosParaReligar(ids) : null, true));
   resposta.hangup();
   enviar(res, resposta);
 });

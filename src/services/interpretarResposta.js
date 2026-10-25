@@ -77,10 +77,29 @@ function interpretarFala(texto) {
   return 'indefinido';
 }
 
+// Gravações de caixa postal das operadoras ("...vamos entregar o seu recado assim que o celular estiver
+// disponível", "deixe sua mensagem após o sinal"...). Quem "atendeu" foi a caixa postal, não o paciente.
+const CAIXA_POSTAL = [
+  /\brecado\b/,
+  /\bcaixa (postal|de mensagens?)\b/,
+  /\b(apos|depois d)[eo]? (o )?(sinal|bip|bipe)\b/,
+  /\bdeixe (a |o )?(sua|seu) (mensagem|recado)\b/,
+  /\bgrave (a |o )?(sua|seu) (mensagem|recado)\b/,
+  /\b(estiver|esta|encontra se) (in)?disponivel\b/,
+  /\bfora da area\b/,
+  /\besta desligado\b/,
+  /\bnao pode atender\b/,
+];
+
+function ehCaixaPostal(texto) {
+  const t = normalizar(texto);
+  return Boolean(t) && CAIXA_POSTAL.some((r) => r.test(t));
+}
+
 // Dicas para o reconhecedor de voz da Twilio priorizar estas palavras.
 const DICAS = [
   'sim', 'não', 'já tomei', 'ainda não', 'ainda não tomei', 'não tomei', 'tomei',
   'esqueci', 'daqui a pouco', 'agora não', 'depois', 'mais tarde', 'já',
 ].join(', ');
 
-module.exports = { interpretarFala, normalizar, DICAS };
+module.exports = { interpretarFala, ehCaixaPostal, normalizar, DICAS };

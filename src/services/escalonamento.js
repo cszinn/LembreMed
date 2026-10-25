@@ -84,7 +84,7 @@ function registrarFim(sid, { status, sip = null, duracao = 0, toque = null }) {
 async function acompanhar() {
   const linhas = db
     .prepare(
-      `SELECT id, call_sid,
+      `SELECT id, call_sid, tipo,
               CAST((julianday(datetime('now','localtime')) - julianday(criado_em)) * 1440 AS INTEGER) AS minutos
        FROM chamadas
        WHERE status = 'discando' AND data IN (?, ?)`
@@ -111,7 +111,7 @@ async function acompanhar() {
     if (sid.startsWith('DRY-')) {
       if (minutos >= 1) {
         marcar(ids, 'sem_resposta');
-        console.log(`[acompanhar] (simulado) ninguém confirmou -> chamadas ${ids.join(',')} sem_resposta`);
+        console.log(`[acompanhar] (simulado) ninguém atendeu -> chamadas ${ids.join(',')} sem_resposta`);
       }
       continue;
     }
@@ -135,18 +135,23 @@ async function acompanhar() {
   }
 }
 
-// 2) Liga de novo ou avisa o cuidador, conforme o número de tentativas.
+// 2) Liga de novo ou avisa o cuidador:
+//    - atendeu e ainda não tomou: depois dos minutos escolhidos para o paciente, liga só para confirmar;
+//    - não atendeu (ou falhou): repete a mesma ligação depois de RETRY_MINUTOS (segundos se a rede recusou).
+// O lembrete e a confirmação têm, cada um, até MAX_TENTATIVAS (recusas rápidas da rede não contam).
 async function processar() {
   const linhas = db
     .prepare(
-      `SELECT c.id, c.horario_id, c.data, c.tentativa, h.hora,
+      `SELECT c.id, c.horario_id, c.data, c.tentativa, c.tipo, c.status, c.atendida, h.hora,
               m.nome AS medicamento, m.descricao,
-              p.id AS paciente_id, p.nome AS paciente, p.telefone,
+              p.id AS paciente_id, p.nome AS paciente, p.telefone, p.minutos_religar,
               cd.nome AS cuidador_nome, cd.telefone AS cuidador_telefone,
-              c.twilio_status, c.toque_seg, c.sip_code,
+              c.twilio_status, c.toque_seg, c.sip_code, c.resposta,
               CAST(round((julianday(datetime('now','localtime')) - julianday(c.atualizado_em)) * 86400) AS INTEGER) AS desde,
               (SELECT count(*) FROM chamadas c3
-               WHERE c3.horario_id = c.horario_id AND c3.data = c.data
+               WHERE c3.horario_id = c.horario_id AND c3.data = c.data AND c3.tipo = c.tipo) AS ligacoes_fase,
+              (SELECT count(*) FROM chamadas c3
+               WHERE c3.horario_id = c.horario_id AND c3.data = c.data AND c3.tipo = c.tipo
                  AND c3.twilio_status = 'no-answer' AND c3.toque_seg < ?) AS recusas_rapidas
        FROM chamadas c
        JOIN horarios h ON h.id = c.horario_id AND h.ativo = 1
@@ -165,58 +170,73 @@ async function processar() {
 
   const grupos = new Map();
   for (const l of linhas) {
+    // atendida = 1 só quando uma pessoa atendeu (a caixa postal volta para 0, ver routes/twilio.js).
+    l.foiAtendida = l.atendida === 1;
     l.rapida = l.twilio_status === 'no-answer' && l.toque_seg !== null && l.toque_seg < RECUSA_RAPIDA_SEG;
-    // Quanto esperar desde o fim da última ligação: segundos após uma recusa rápida, RETRY_MINUTOS nos outros casos.
-    l.espera = l.rapida ? esperaRecusaRapida(l.recusas_rapidas) : INTERVALO * 60;
+    l.proximoTipo = l.foiAtendida ? 'confirmacao' : l.tipo;
+    // Quanto esperar desde o fim da última ligação.
+    l.espera = l.foiAtendida
+      ? l.minutos_religar * 60
+      : l.rapida
+        ? esperaRecusaRapida(l.recusas_rapidas)
+        : INTERVALO * 60;
     const chave = `${l.paciente_id}|${l.data}|${l.hora}|${l.tentativa}`;
     if (!grupos.has(chave)) grupos.set(chave, []);
     grupos.get(chave).push(l);
   }
 
   for (const [chave, grupo] of grupos) {
-    // Recusas rápidas da rede (até RECUSAS_RAPIDAS_EXTRAS por dose) não contam como tentativa.
-    const usadas = grupo[0].tentativa - Math.min(grupo[0].recusas_rapidas, RECUSAS_RAPIDAS_EXTRAS);
+    const g = grupo[0];
+
+    // Tentativas já usadas na fase da próxima ligação (recusas rápidas da rede não contam).
+    // Depois de um lembrete atendido começa a fase de confirmação, ainda sem nenhuma usada.
+    const usadas = g.proximoTipo === g.tipo ? g.ligacoes_fase - Math.min(g.recusas_rapidas, RECUSAS_RAPIDAS_EXTRAS) : 0;
     if (usadas >= MAX) {
       await escalar(chave, grupo);
       continue;
     }
     const falta = Math.max(...grupo.map((l) => l.espera - l.desde));
     if (falta <= 0) {
-      await tentarNovamente(grupo, usadas);
-    } else if (grupo[0].rapida && falta < 60) {
+      const motivo = g.foiAtendida
+        ? `ainda não tomou${g.resposta ? ` (disse "${g.resposta}")` : ''}; ligando para confirmar`
+        : g.rapida
+          ? `a rede recusou em ${g.toque_seg}s (SIP ${g.sip_code ?? '?'})`
+          : 'não atendeu';
+      await tentarNovamente(grupo, g.proximoTipo, `${motivo} (${usadas} de ${MAX} tentativas usadas)`);
+    } else if ((g.rapida || g.foiAtendida) && falta < 60) {
       // Não espera o agendador do próximo minuto: religa assim que der o tempo.
       agendarRodada(falta);
     }
   }
 }
 
-async function tentarNovamente(grupo, usadas) {
+async function tentarNovamente(grupo, tipo, motivo) {
   const proxima = grupo[0].tentativa + 1;
   const reservar = db.prepare(
-    'INSERT OR IGNORE INTO chamadas (horario_id, data, tentativa) VALUES (?, ?, ?)'
+    'INSERT OR IGNORE INTO chamadas (horario_id, data, tentativa, tipo) VALUES (?, ?, ?, ?)'
   );
   const novos = [];
   db.transaction(() => {
     for (const l of grupo) {
-      const info = reservar.run(l.horario_id, l.data, proxima);
+      const info = reservar.run(l.horario_id, l.data, proxima, tipo);
       if (info.changes === 1) novos.push({ ...l, chamada_id: Number(info.lastInsertRowid) });
     }
   })();
   if (!novos.length) return;
 
   const g = grupo[0];
-  const motivo = g.rapida ? `a rede recusou em ${g.toque_seg}s (SIP ${g.sip_code ?? '?'})` : 'não confirmou';
-  console.log(
-    `[escalonamento] ${g.paciente}, remédio das ${g.hora}: ${motivo} -> ligação ${proxima} (${usadas} de ${MAX} tentativas usadas)`
-  );
-  await ligar(novos, grupo[0].hora);
+  console.log(`[escalonamento] ${g.paciente}, remédio das ${g.hora}: ${motivo} -> ligação ${proxima} (${tipo})`);
+  await ligar(novos, g.hora, tipo);
 }
 
 async function escalar(chave, grupo) {
   const ids = grupo.map((l) => l.id);
   const g = grupo[0];
   const remedios = grupo.map((l) => l.medicamento).join(', ');
-  const texto = `ALERTA: ${g.paciente} não confirmou o remédio das ${g.hora} (${remedios}). Tentamos ligar ${g.tentativa} vezes. Por favor, entre em contato.`;
+  const texto =
+    g.tipo === 'lembrete'
+      ? `ALERTA: não conseguimos falar com ${g.paciente} para lembrar do remédio das ${g.hora} (${remedios}). Tentamos ligar ${g.tentativa} vezes. Por favor, entre em contato.`
+      : `ALERTA: ${g.paciente} não confirmou o remédio das ${g.hora} (${remedios}). Tentamos ligar ${g.tentativa} vezes. Por favor, entre em contato.`;
 
   try {
     await enviarSms({ para: g.cuidador_telefone, texto });
@@ -234,6 +254,29 @@ async function escalar(chave, grupo) {
       );
     }
   }
+}
+
+// Para a fala do fim da ligação: em quantos minutos o sistema liga de novo para confirmar, ou null
+// se as tentativas de confirmação já acabaram (aí o cuidador recebe o alerta).
+function minutosParaReligar(ids) {
+  const r = db
+    .prepare(
+      `SELECT p.minutos_religar,
+              (SELECT count(*) FROM chamadas c3
+               WHERE c3.horario_id = c.horario_id AND c3.data = c.data AND c3.tipo = 'confirmacao') AS confirmacoes,
+              (SELECT count(*) FROM chamadas c3
+               WHERE c3.horario_id = c.horario_id AND c3.data = c.data AND c3.tipo = 'confirmacao'
+                 AND c3.twilio_status = 'no-answer' AND c3.toque_seg < ?) AS recusas
+       FROM chamadas c
+       JOIN horarios h ON h.id = c.horario_id
+       JOIN medicamentos m ON m.id = h.medicamento_id
+       JOIN pacientes p ON p.id = m.paciente_id
+       WHERE c.id = ?`
+    )
+    .get(RECUSA_RAPIDA_SEG, ids[0]);
+  if (!r) return null;
+  const usadas = r.confirmacoes - Math.min(r.recusas, RECUSAS_RAPIDAS_EXTRAS);
+  return usadas >= MAX ? null : r.minutos_religar;
 }
 
 // Avisa o cuidador por SMS que o paciente confirmou, com a frase que ele falou ("tomei sim", "já"...).
@@ -305,8 +348,8 @@ function iniciar() {
   iniciado = true;
   cron.schedule('* * * * *', rodada, { timezone: config.timezone });
   console.log(
-    `Escalonamento ativo (até ${MAX} tentativas, intervalo de ${INTERVALO} min, recusa rápida religa em segundos, alerta por SMS)`
+    `Escalonamento ativo (se ainda não tomou, religa no tempo de cada paciente; até ${MAX} tentativas, intervalo de ${INTERVALO} min, recusa rápida religa em segundos, alerta por SMS)`
   );
 }
 
-module.exports = { iniciar, acompanhar, processar, registrarFim, avisarConfirmacao };
+module.exports = { iniciar, acompanhar, processar, registrarFim, avisarConfirmacao, minutosParaReligar };

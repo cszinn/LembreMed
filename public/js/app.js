@@ -307,6 +307,7 @@ function renderListaLateral() {
 function detalheChamada(c) {
   const disse = c.resposta ? `Disse: "${c.resposta}"` : '';
   if (c.status === 'discando') return 'Ligação em andamento';
+  if (c.caixa_postal) return 'Caiu na caixa postal (celular indisponível ou não atendeu)';
   if (c.twilio_status === 'no-answer' && c.toque_seg !== null && c.toque_seg < 10) {
     return `A rede recusou em ${c.toque_seg}s (o telefone não tocou)`;
   }
@@ -365,7 +366,7 @@ async function carregarHistoricoChamadas(pacienteId) {
               <th>Data</th>
               <th>Horário da Dose</th>
               <th>Medicamento</th>
-              <th>Tentativa</th>
+              <th>Ligação</th>
               <th>Status do Atendimento</th>
               <th>Detalhe</th>
             </tr>
@@ -384,7 +385,7 @@ async function carregarHistoricoChamadas(pacienteId) {
                 } else if (c.status === 'sem_resposta') {
                   badgeClass = 'bg-warning text-dark';
                   icone = 'bi-telephone-x-fill';
-                  label = 'Não confirmou';
+                  label = c.caixa_postal ? 'Caixa postal' : c.atendida ? 'Ainda não tomou' : 'Não atendeu';
                 } else if (c.status === 'falhou') {
                   badgeClass = 'bg-danger';
                   icone = 'bi-exclamation-octagon-fill';
@@ -404,7 +405,10 @@ async function carregarHistoricoChamadas(pacienteId) {
                   <td class="fw-semibold">${esc(c.data)}</td>
                   <td><span class="badge bg-light text-dark border px-2 py-1">${esc(c.hora || '--:--')}</span></td>
                   <td class="fw-medium">${esc(c.medicamento || 'Geral')}</td>
-                  <td><span class="text-muted small">${c.tentativa}ª tentativa</span></td>
+                  <td>
+                    <span class="fw-medium small">${c.tipo === 'lembrete' ? 'Lembrete' : 'Confirmação'}</span>
+                    <span class="text-muted small d-block">${c.tentativa}ª ligação da dose</span>
+                  </td>
                   <td>
                     <span class="badge ${badgeClass} d-inline-flex align-items-center gap-1 py-1 px-2">
                       <i class="bi ${icone}"></i> ${label}
@@ -454,7 +458,8 @@ function renderPacientePrincipal(p) {
                 </h4>
                 <div class="med-voice-box mt-2">
                   <i class="bi bi-soundwave text-primary me-1 fs-6"></i>
-                  <strong>Roteiro falado pela assistente:</strong> "Está na hora do seu remédio: ${esc(m.nome)}, <em>${esc(m.descricao)}</em>. Você já tomou?"
+                  <strong>No horário:</strong> "Está na hora do seu remédio: ${esc(m.nome)}, <em>${esc(m.descricao)}</em>. Você já tomou?"
+                  <br><strong>Se ainda não tomou, ${p.minutos_religar} min depois:</strong> "Você já tomou o seu remédio, ${esc(m.nome)}?"
                 </div>
               </div>
               
@@ -624,8 +629,8 @@ function renderPacientePrincipal(p) {
             <i class="bi bi-telephone-check-fill"></i>
           </div>
           <div>
-            <div class="stat-value">${isAtivo ? 'Ativo' : 'Pausado'}</div>
-            <div class="stat-label">Status da Telefonia</div>
+            <div class="stat-value">${p.minutos_religar} min</div>
+            <div class="stat-label">Religa para confirmar se ainda não tomou</div>
           </div>
         </div>
       </div>
@@ -814,6 +819,11 @@ document.addEventListener('click', async (ev) => {
         $('#editPacienteNome').value = pac.nome;
         $('#editPacienteTelefone').value = fmtTel(pac.telefone);
         $('#editPacienteAtivo').value = pac.ativo ? '1' : '0';
+        const selMinutos = $('#editPacienteMinutos');
+        const minutos = String(pac.minutos_religar || 5);
+        // Valor fora da lista (a API aceita de 1 a 60): mostra mesmo assim, para não trocar sem querer.
+        if (![...selMinutos.options].some((o) => o.value === minutos)) selMinutos.add(new Option(`${minutos} minutos`, minutos));
+        selMinutos.value = minutos;
 
         const modal = new bootstrap.Modal($('#modalEditarPaciente'));
         modal.show();
@@ -920,6 +930,7 @@ document.addEventListener('submit', async (ev) => {
           telefone: dados.telefone,
           // Mantém o paciente pausado ao editar ("0" || 1 reativava sem querer).
           ativo: dados.ativo === '0' ? 0 : 1,
+          minutos_religar: Number(dados.minutos_religar),
         },
       });
       fecharModal('modalEditarPaciente');

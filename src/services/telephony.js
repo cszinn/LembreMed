@@ -27,7 +27,7 @@ async function discar({ paciente, mensagem, chamadaIds }) {
   if (config.dryRun) {
     const callSid = `DRY-${Date.now()}-${chamadaIds[0]}`;
     console.log(`  [SIMULADO] ligando para ${paciente.nome} (${paciente.telefone})`);
-    console.log(`  "${mensagem.introducao} ${mensagem.pergunta}"`);
+    console.log(`  "${mensagem}"`);
     return { callSid };
   }
 
@@ -38,7 +38,7 @@ async function discar({ paciente, mensagem, chamadaIds }) {
 
   const ligacao = await getClient().calls.create({
     to: paciente.telefone,
-    from: config.twilio.phoneNumber,
+    from: config.twilio.callerId || config.twilio.phoneNumber,
     url: `${config.baseUrl}/twilio/voz`,
     timeout: 60,
     // Ao terminar, a Twilio avisa o resultado e o código SIP (ex.: 480 = indisponível/filtro da rede).

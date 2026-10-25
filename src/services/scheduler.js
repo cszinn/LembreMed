@@ -29,20 +29,21 @@ const buscarDevidos = db.prepare(`
   ORDER BY p.id, m.nome
 `);
 
+// No horário da dose, a primeira ligação é o lembrete; a confirmação vem depois (escalonamento.js).
 const reservar = db.prepare(
-  'INSERT OR IGNORE INTO chamadas (horario_id, data, tentativa) VALUES (?, ?, 1)'
+  "INSERT OR IGNORE INTO chamadas (horario_id, data, tentativa, tipo) VALUES (?, ?, 1, 'lembrete')"
 );
 
-async function ligar(itens, hora) {
+async function ligar(itens, hora, tipo) {
   const paciente = { nome: itens[0].paciente, telefone: itens[0].telefone };
   const ids = itens.map((i) => i.chamada_id);
   const marcadores = ids.map(() => '?').join(',');
 
-  console.log(`[${hora}] ${itens.length} medicamento(s) para ${paciente.nome}`);
+  console.log(`[${hora}] ${tipo === 'lembrete' ? 'lembrete' : 'confirmação'}: ${itens.length} medicamento(s) para ${paciente.nome}`);
   try {
     const { callSid } = await discar({
       paciente,
-      mensagem: montarMensagem(paciente.nome, itens),
+      mensagem: montarMensagem(paciente.nome, itens, tipo),
       chamadaIds: ids,
     });
     db.prepare(
@@ -86,7 +87,7 @@ async function varrer(referencia = new Date()) {
   }
 
   for (const itens of porPaciente.values()) {
-    await ligar(itens, itens[0].hora);
+    await ligar(itens, itens[0].hora, 'lembrete');
   }
   return novos.length;
 }

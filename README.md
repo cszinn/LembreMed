@@ -20,9 +20,17 @@ Muitos idosos e pacientes em tratamento contínuo esquecem de tomar os medicamen
 
 No horário cadastrado, o sistema liga para o paciente:
 
+> **08:00**
 > 🤖 *"Olá, Dona Maria. Está na hora do seu remédio: Losartana, o comprimido redondo e rosa. Você já tomou?"*
+> 👵 *"Ainda não."*
+> 🤖 *"Tudo bem. Tome o seu remédio agora, por favor. Te ligo de novo em 5 minutos para confirmar. Até logo."*
+>
+> **08:05**
+> 🤖 *"Olá, Dona Maria. Você já tomou o seu remédio, Losartana?"*
 > 👵 *"Já tomei, sim."*
 > 🤖 *"Obrigado! Até logo."*
+
+Se ela já tivesse respondido "sim" às 08:00, seria uma ligação só. O tempo para ligar de novo (5 minutos no exemplo) é escolhido pelo cuidador para cada paciente.
 
 O cuidador recebe na hora um SMS: *"LembreMed: Dona Maria confirmou o remédio das 08:00 (Losartana). Resposta: "Já tomei, sim.""*. Se o paciente não atender ou não confirmar, o sistema liga de novo e, esgotadas as tentativas, **manda um SMS de alerta ao cuidador**.
 
@@ -127,21 +135,23 @@ Abra o endereço do **Painel**, clique em **Fazer login com o Google** e, no pri
 - **Ligar:** `npm start` na pasta do projeto. **Desligar:** `Ctrl+C` na janela (ou fechar a janela).
 - **Enquanto estiver ligado**, o PC precisa ficar **ligado, com internet e sem suspender**. No Windows: *Configurações > Sistema > Energia* e deixe "suspender" como **Nunca** quando estiver na tomada. Se o PC dormir na hora de uma dose, o sistema ainda liga quando acordar, desde que seja em até 10 minutos.
 - **Cadastrar:** no painel, *Cadastrar Paciente* (nome e telefone com DDD) > *Adicionar Medicamento* (nome, descrição amigável e horários). A descrição é o que a assistente fala: escreva como o paciente reconhece o remédio, ex.: *"o comprimido redondo e rosa"*.
-- **Testar uma ligação:** cadastre um horário 2 minutos à frente e espere.
+- **Testar uma ligação:** cadastre um horário 2 minutos à frente e espere. Para a apresentação, deixe o paciente com "ligar de novo em **1 minuto**" (no cadastro ou em *Editar Paciente*) para mostrar a segunda ligação sem esperar.
 - **Pausar as ligações** de um paciente: chave *Pausar ligações* na página dele.
 - **Histórico:** cada paciente mostra as últimas 20 ligações e, na coluna *Detalhe*, o que aconteceu ("Disse: 'já tomei'", "A rede recusou em 2s", "Tocou e ninguém atendeu"...).
 - **Status da URA** (menu ☰ do painel): *Operacional*, *Simulação (não liga)* ou *Fora do ar (ngrok?)*, mais o resumo das ligações do dia.
 
-**Como o sistema decide:**
+**Como o sistema decide:** no horário, a ligação diz o remédio e pergunta "Você já tomou?". Se o paciente ainda não tomou, as próximas ligações só perguntam "Você já tomou o seu remédio, Losartana?".
 
 | O paciente... | O que acontece |
 | --- | --- |
 | Diz um "sim" claro ("sim", "já", "já tomei", "tomei sim"...) | Dose confirmada, "Obrigado! Até logo." e **SMS ao cuidador** com a frase |
-| Diz qualquer outra coisa ("ainda não", "vou tomar", algo sem sentido) | Conta como **não**: "Tudo bem. Não esqueça de tomar o seu remédio." Liga de novo depois de `RETRY_MINUTOS` |
-| Atende e fica em silêncio | "Não ouvi a sua resposta." Liga de novo depois de `RETRY_MINUTOS` |
+| Diz qualquer outra coisa ("ainda não", "vou tomar", algo sem sentido) | Conta como **não**: "Tudo bem. Tome o seu remédio agora, por favor. Te ligo de novo em 5 minutos para confirmar." Liga de novo depois do **tempo escolhido para o paciente** |
+| Atende e fica em silêncio | "Não ouvi a sua resposta…" e liga de novo depois do tempo escolhido para o paciente |
 | Não atende | Liga de novo depois de `RETRY_MINUTOS` |
+| Cai na caixa postal ("deixe seu recado…") | Conta como **não atendida**: desliga sem deixar recado e repete a ligação completa depois de `RETRY_MINUTOS` |
 | A rede recusa sem o telefone tocar | Religa em segundos (5, 10, 20, 40 e depois 60 s); as 6 primeiras recusas não contam como tentativa |
-| Acabam as tentativas (`MAX_TENTATIVAS`) | **SMS de alerta ao cuidador** |
+| Nunca atende (`MAX_TENTATIVAS` ligações) | **SMS de alerta ao cuidador**: "não conseguimos falar com…" |
+| Atende mas nunca confirma (`MAX_TENTATIVAS` ligações de confirmação) | **SMS de alerta ao cuidador**: "não confirmou o remédio…" |
 
 ---
 
@@ -205,6 +215,15 @@ A Vivo informa que a mudança leva **até 24 horas** para valer. Com o filtro de
 
 Fontes: [Vivo, Anti Spam](https://vivo.com.br/para-voce/modo-seguro/anti-spam) · [Tecnoblog](https://tecnoblog.net/noticias/vivo-libera-sistema-anti-spam-gratis-para-todos-veja-como-ativar/) · [Teletime](https://teletime.com.br/14/08/2026/anatel-decide-que-vivo-anti-spam-e-legal-e-recomenda-modelo/)
 
+### Número que aparece para o paciente
+
+Com o `TWILIO_PHONE_NUMBER` dos EUA (+1), a Vivo recusou quase todas as ligações. A solução usada foi o `TWILIO_CALLER_ID`: um **celular brasileiro verificado** na Twilio (*Phone Numbers > Manage > Verified Caller IDs*), que passa a aparecer como número de quem liga. Com ele, as ligações para linhas Vivo tocaram de primeira (teste de 25/10/2026). Dois efeitos colaterais:
+
+- Como a Twilio não tem rota própria dentro do Brasil, a ligação entra por uma operadora internacional, e alguns celulares mostram o país dessa rota (no teste, **"Países Baixos"**) junto do número.
+- Se o paciente ligar de volta, cai no celular verificado (o de quem cuida do sistema).
+
+Para tirar isso de vez, a ligação precisa sair de um provedor com rota nacional e número brasileiro próprio (por exemplo, um celular brasileiro exclusivo da Twilio, a Telnyx ou um provedor brasileiro).
+
 ### Outras
 
 - **O PC precisa ficar ligado.** Sem hospedagem em nuvem, o LembreMed só liga enquanto o `npm start` estiver rodando.
@@ -264,11 +283,12 @@ O `npm run configurar` preenche as principais. As outras podem ser editadas dire
 | `TWILIO_ACCOUNT_SID` | — | SID da conta Twilio |
 | `TWILIO_AUTH_TOKEN` | — | Token da conta Twilio (secreto) |
 | `TWILIO_PHONE_NUMBER` | — | Número da Twilio que liga e manda SMS (`+1...`) |
+| `TWILIO_CALLER_ID` | (vazio) | Opcional: número que aparece para o paciente nas ligações, ex.: um celular brasileiro verificado em *Phone Numbers > Manage > Verified Caller IDs*. O SMS continua saindo do `TWILIO_PHONE_NUMBER` |
 | `BASE_URL` | — | Endereço público (domínio fixo do ngrok), usado pela Twilio e pelo painel |
 | `GOOGLE_CLIENT_ID` | — | ID do cliente OAuth do Google (login do painel) |
 | `DRY_RUN` | `true` | `true` só simula (não liga nem manda SMS); `false` liga de verdade |
-| `MAX_TENTATIVAS` | `3` | Ligações por dose antes do alerta ao cuidador |
-| `RETRY_MINUTOS` | `2` | Minutos entre uma tentativa e outra |
+| `MAX_TENTATIVAS` | `3` | Ligações sem atender (e, depois, ligações de confirmação) antes do alerta ao cuidador |
+| `RETRY_MINUTOS` | `2` | Minutos para ligar de novo quando o paciente não atende (quando atende e ainda não tomou, vale o tempo escolhido no painel para cada paciente) |
 | `VOZ` | `Polly.Camila-Neural` | Voz da ligação (outras: `Polly.Vitoria-Neural`, `Polly.Thiago-Neural`) |
 | `VOZ_CONFIANCA_MINIMA` | `0.5` | Confiança mínima (0 a 1) para aceitar um "sim" falado |
 | `APP_TZ` | `America/Sao_Paulo` | Fuso horário dos horários das doses |
@@ -282,7 +302,7 @@ O `npm run configurar` preenche as principais. As outras podem ser editadas dire
 ## ✨ Funcionalidades
 
 - 📞 **Ligação automática** no horário de cada medicamento, com voz neural em pt-BR (Amazon Polly via Twilio).
-- 🗣️ **Mensagem curta e dinâmica**: agrupa vários remédios do mesmo horário numa única ligação ("Primeiro: …, Segundo: …") e só pergunta "Você já tomou?".
+- 🗣️ **Ligação curta e dinâmica**: no horário, diz qual remédio tomar (agrupando vários do mesmo horário: "Primeiro: …, Segundo: …") e pergunta "Você já tomou?". Se ainda não tomou, liga de novo só para confirmar, no tempo que o cuidador escolheu para aquele paciente (1 a 30 minutos).
 - 🎙️ **Confirmação por voz**: o paciente responde do jeito que quiser. Só um "sim" claro confirma; qualquer outra frase conta como "não", sem repetir a pergunta.
 - 🔁 **Retentativas**: liga de novo após `RETRY_MINUTOS`, até `MAX_TENTATIVAS`. Recusas rápidas da rede (o telefone nem toca) são religadas em segundos e as 6 primeiras não contam.
 - 🚨 **SMS ao cuidador**: alerta quando as tentativas acabam e aviso de confirmação com a frase dita.
@@ -301,11 +321,15 @@ flowchart TD
     A["⏰ Agendador (a cada minuto)"] --> B{"Há doses<br/>para agora?"}
     B -- Não --> A
     B -- Sim --> C["Reserva a chamada no banco<br/>(idempotente)"]
-    C --> D["📞 Twilio liga para o paciente"]
-    D --> E{"Paciente disse sim?"}
+    C --> L["📞 Ligação: diz o remédio<br/>e pergunta se já tomou"]
+    L --> E{"Paciente disse sim?"}
     E -- Sim --> F["✅ Confirmada<br/>+ SMS ao cuidador"]
-    E -- "Outra resposta / não atendeu" --> G{"Tentativas < MAX?"}
-    G -- Sim --> H["⏳ Aguarda RETRY_MINUTOS<br/>(segundos se a rede recusou)"] --> D
+    E -- "Ainda não / silêncio" --> W["⏳ Tempo escolhido<br/>para o paciente"]
+    W --> D["📞 Ligação de confirmação<br/>(Você já tomou?)"]
+    D --> E
+    L -- "Não atendeu" --> G{"Tentativas < MAX?"}
+    D -- "Não atendeu" --> G
+    G -- Sim --> H["⏳ RETRY_MINUTOS e repete<br/>a mesma ligação<br/>(segundos se a rede recusou)"]
     G -- Não --> I["🚨 SMS de alerta ao cuidador"]
     I --> J["Escalonada"]
 ```
@@ -320,7 +344,7 @@ flowchart TD
 | `falhou` | Erro ao discar (ex.: ngrok fora do ar) ou falha na operadora |
 | `escalonada` | Tentativas esgotadas, cuidador avisado |
 
-Cada chamada também guarda `twilio_status`, `sip_code`, `duracao_seg`, `toque_seg` (segundos até a recusa, quando não atendida) e `resposta` (a frase que o paciente falou).
+Cada chamada também guarda o `tipo` (`lembrete`: diz o remédio e pergunta; `confirmacao`: só pergunta), `atendida`, `twilio_status`, `sip_code`, `duracao_seg`, `toque_seg` (segundos até a recusa, quando não atendida) e `resposta` (a frase que o paciente falou).
 
 ### Tecnologias
 

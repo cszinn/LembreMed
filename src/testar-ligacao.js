@@ -30,7 +30,7 @@ const chamadaId = Number(
 
 discar({
   paciente: { nome: 'Teste', telefone },
-  mensagem: montarMensagem('Maria', [horario]),
+  mensagem: montarMensagem('Maria', [horario], 'confirmacao'),
   chamadaIds: [chamadaId],
 })
   .then(({ callSid }) => {

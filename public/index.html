@@ -159,7 +159,7 @@
             </div>
             <div id="resumoHoje" class="small text-muted mb-1" style="font-size: 0.75rem;"></div>
             <div class="small text-muted" style="font-size: 0.72rem;">
-              <i class="bi bi-info-circle me-1"></i>O agendador liga para cada paciente no horário da dose e avisa você por SMS se houver ou não confirmação.
+              <i class="bi bi-info-circle me-1"></i>No horário da dose o sistema liga, lembra o remédio e pergunta se já tomou. Se ainda não tomou, liga de novo para confirmar no tempo escolhido para o paciente. Você recebe um SMS quando o paciente confirma ou se ele não responder.
             </div>
           </div>
 
@@ -208,6 +208,18 @@
             </div>
             <div class="form-text small">Número celular ou fixo com DDD que atenderá a chamada.</div>
           </div>
+          <div class="mb-3">
+            <label class="form-label">Se ainda não tomou, ligar de novo para confirmar em</label>
+            <select name="minutos_religar" class="form-select">
+              <option value="1">1 minuto</option>
+              <option value="2">2 minutos</option>
+              <option value="5" selected>5 minutos</option>
+              <option value="10">10 minutos</option>
+              <option value="15">15 minutos</option>
+              <option value="30">30 minutos</option>
+            </select>
+            <div class="form-text small">No horário, a ligação lembra o remédio e pergunta se já tomou. Se a resposta for não, o sistema liga de novo depois deste tempo só para confirmar.</div>
+          </div>
 
           <div class="bg-light p-3 rounded-3 border small text-muted">
             <i class="bi bi-shield-check text-primary me-1"></i>
@@ -251,6 +263,17 @@
               <span class="input-group-text"><i class="bi bi-telephone"></i></span>
               <input name="telefone" id="editPacienteTelefone" class="form-control tel-mask" required>
             </div>
+          </div>
+          <div class="mb-3">
+            <label class="form-label">Se ainda não tomou, ligar de novo para confirmar em</label>
+            <select name="minutos_religar" id="editPacienteMinutos" class="form-select">
+              <option value="1">1 minuto</option>
+              <option value="2">2 minutos</option>
+              <option value="5">5 minutos</option>
+              <option value="10">10 minutos</option>
+              <option value="15">15 minutos</option>
+              <option value="30">30 minutos</option>
+            </select>
           </div>
         </div>
         <div class="modal-footer">
@@ -360,7 +383,7 @@
                    placeholder="Ex: o comprimido redondo e branco" required>
             <div class="med-voice-box mt-2">
               <i class="bi bi-mic-fill me-1 text-primary"></i>
-              A assistente dirá: <em>"Está na hora do seu remédio: [nome], <strong>[sua descrição aqui]</strong>. Você já tomou?"</em>
+              No horário, a assistente dirá: <em>"Está na hora do seu remédio: [nome], <strong>[sua descrição aqui]</strong>. Você já tomou?"</em>
             </div>
           </div>
           <div class="mb-3">
