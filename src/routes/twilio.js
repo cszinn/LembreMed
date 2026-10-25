@@ -4,7 +4,7 @@ const db = require('../db');
 const config = require('../config');
 const { montarMensagem, respostaSemConfirmar } = require('../services/mensagem');
 const validarAssinaturaTwilio = require('../middleware/twilioAssinatura');
-const { interpretarFala, ehCaixaPostal, DICAS } = require('../services/interpretarResposta');
+const { interpretarFala, ehCaixaPostal, ehSaudacao, DICAS } = require('../services/interpretarResposta');
 const { registrarFim, avisarConfirmacao, minutosParaReligar } = require('../services/escalonamento');
 
 const router = express.Router();
@@ -70,7 +70,8 @@ function falhaTemporaria() {
 // Cria o <Gather> que escuta a fala do paciente (pt-BR). Não há resposta por teclado.
 // experimental_utterances é o modelo da Twilio para respostas curtas ("sim", "já tomei"); com ele o
 // speechTimeout precisa ser um número: 1 s de pausa já encerra a escuta, para a resposta chegar logo.
-function criarGather(resposta, lista) {
+// pergunta = 1 na primeira vez; 2 quando repetimos porque o paciente só disse "alô", "oi"...
+function criarGather(resposta, lista, pergunta = 1) {
   return resposta.gather({
     input: 'speech',
     language: 'pt-BR',
@@ -78,7 +79,7 @@ function criarGather(resposta, lista) {
     speechTimeout: 1,
     timeout: 10,
     hints: DICAS,
-    action: `${config.baseUrl}/twilio/digito?ids=${lista}`,
+    action: `${config.baseUrl}/twilio/digito?ids=${lista}&p=${pergunta}`,
     method: 'POST',
   });
 }
@@ -117,7 +118,10 @@ router.post(['/voz', '/atendimento'], async (req, res) => {
     // Marca como atendida: se o paciente ainda não tomou, a próxima ligação é só de confirmação.
     db.prepare(`UPDATE chamadas SET atendida = 1 WHERE id IN (${ids.map(() => '?').join(',')})`).run(...ids);
 
-    criarGather(resposta, lista).say(VOZ, montarMensagem(itens[0].paciente, itens, tipo));
+    // A mensagem vem ANTES do <Gather> (e não dentro dele): só escutamos depois da pergunta. Assim o
+    // "alô", "oi" ou até um "sim?" de quem atende não vira a resposta.
+    resposta.say(VOZ, montarMensagem(itens[0].paciente, itens, tipo));
+    criarGather(resposta, lista);
     resposta.redirect({ method: 'POST' }, `${config.baseUrl}/twilio/sem-digito?ids=${lista}`);
 
     enviar(res, resposta);
@@ -170,6 +174,15 @@ router.post('/digito', (req, res) => {
     db.prepare(`UPDATE chamadas SET atendida = 0, caixa_postal = 1 WHERE id IN (${m})`).run(...ids);
     atualizar(ids, 'sem_resposta');
     resposta.hangup();
+    return enviar(res, resposta);
+  }
+  // Só cumprimentou ("alô?", "oi, quem é?"): pergunta de novo, uma vez, em vez de contar como "não".
+  if (fala && ehSaudacao(fala) && Number(req.query.p || 1) < 2) {
+    console.log(`[twilio] chamadas ${ids.join(',')} | só cumprimentou ("${fala}") -> pergunta de novo`);
+    const lista = ids.join(',');
+    resposta.say(VOZ, 'Olá! Aqui é o LembreMed, o lembrete do seu remédio. Você já tomou o seu remédio?');
+    criarGather(resposta, lista, 2);
+    resposta.redirect({ method: 'POST' }, `${config.baseUrl}/twilio/sem-digito?ids=${lista}`);
     return enviar(res, resposta);
   }
   console.log(`[twilio] chamadas ${ids.join(',')} | ${origem} -> ${resultado}`);

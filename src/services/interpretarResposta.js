@@ -77,6 +77,15 @@ function interpretarFala(texto) {
   return 'indefinido';
 }
 
+// Cumprimentos de quem atende ("alô", "oi, quem é?", "boa tarde"): não são resposta à pergunta.
+const SAUDACOES = /\b(alo+|alou|oi+|ola|opa|hello|e ai|bom dia|boa tarde|boa noite|pronto|pois nao|diga|fala|cara|mano|amigo|amiga|querida|querido|tudo (bem|bom|certo)|quem (e|fala|ta falando|esta falando)|quem e que (ta|esta) falando)\b/g;
+
+// true se a fala é SÓ cumprimento (nada sobra depois de tirar os cumprimentos)
+function ehSaudacao(texto) {
+  const t = normalizar(texto);
+  return Boolean(t) && !t.replace(SAUDACOES, ' ').replace(/\s+/g, ' ').trim();
+}
+
 // Gravações de caixa postal das operadoras ("...vamos entregar o seu recado assim que o celular estiver
 // disponível", "deixe sua mensagem após o sinal"...). Quem "atendeu" foi a caixa postal, não o paciente.
 const CAIXA_POSTAL = [
@@ -102,4 +111,4 @@ const DICAS = [
   'esqueci', 'daqui a pouco', 'agora não', 'depois', 'mais tarde', 'já',
 ].join(', ');
 
-module.exports = { interpretarFala, ehCaixaPostal, normalizar, DICAS };
+module.exports = { interpretarFala, ehCaixaPostal, ehSaudacao, normalizar, DICAS };
