@@ -78,7 +78,7 @@ function interpretarFala(texto) {
 }
 
 // Cumprimentos de quem atende ("alô", "oi, quem é?", "boa tarde"): não são resposta à pergunta.
-const SAUDACOES = /\b(alo+|alou|oi+|ola|opa|hello|e ai|bom dia|boa tarde|boa noite|pronto|pois nao|diga|fala|cara|mano|amigo|amiga|querida|querido|tudo (bem|bom|certo)|quem (e|fala|ta falando|esta falando)|quem e que (ta|esta) falando)\b/g;
+const SAUDACOES = /\b(alo+|alou|oi+|ola|opa|ata|ah ta|hum+|hello|e ai|(bom |boa |a |o )?(dia|tarde|noite)|pronto|pois nao|diga|fala|cara|mano|amigo|amiga|querida|querido|tudo (bem|bom|certo)|quem (e|fala|ta falando|esta falando)|quem e que (ta|esta) falando)\b/g;
 
 // true se a fala é SÓ cumprimento (nada sobra depois de tirar os cumprimentos)
 function ehSaudacao(texto) {
@@ -107,7 +107,8 @@ function ehCaixaPostal(texto) {
 
 // Dicas para o reconhecedor de voz da Twilio priorizar estas palavras.
 const DICAS = [
-  'sim', 'não', 'já tomei', 'ainda não', 'ainda não tomei', 'não tomei', 'tomei',
+  'sim', 'não', 'já tomei', 'tomei sim', 'sim, tomei', 'já tomei sim', 'ata', 'ah tá',
+  'ainda não', 'ainda não tomei', 'não tomei', 'tomei',
   'esqueci', 'daqui a pouco', 'agora não', 'depois', 'mais tarde', 'já',
 ].join(', ');
 

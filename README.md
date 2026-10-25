@@ -146,7 +146,7 @@ Abra o endereço do **Painel**, clique em **Fazer login com o Google** e, no pri
 | --- | --- |
 | Diz um "sim" claro ("sim", "já", "já tomei", "tomei sim"...) | Dose confirmada, "Obrigado! Até logo." e **SMS ao cuidador** com a frase |
 | Diz qualquer outra coisa ("ainda não", "vou tomar", algo sem sentido) | Conta como **não**: "Tudo bem. Tome o seu remédio agora, por favor. Te ligo de novo em 5 minutos para confirmar." Liga de novo depois do **tempo escolhido para o paciente** |
-| Atende dizendo só "alô", "oi", "quem é?" | Não conta como resposta: o sistema só escuta **depois** da pergunta e, se mesmo assim vier só um cumprimento, pergunta de novo uma vez |
+| Atende dizendo só "alô", "oi", "quem é?", ou o reconhecimento não entende a fala | Não conta como resposta: o sistema só escuta **depois** da pergunta e, se vier só um cumprimento ou algo que ele não entendeu, pergunta de novo (até 3 perguntas por ligação) |
 | Atende e fica em silêncio | "Não ouvi a sua resposta…" e liga de novo depois do tempo escolhido para o paciente |
 | Não atende | Liga de novo depois de `RETRY_MINUTOS` |
 | Cai na caixa postal ("deixe seu recado…") | Conta como **não atendida**: desliga sem deixar recado e repete a ligação completa depois de `RETRY_MINUTOS` |

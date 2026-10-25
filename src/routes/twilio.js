@@ -69,14 +69,18 @@ function falhaTemporaria() {
 
 // Cria o <Gather> que escuta a fala do paciente (pt-BR). Não há resposta por teclado.
 // experimental_utterances é o modelo da Twilio para respostas curtas ("sim", "já tomei"); com ele o
-// speechTimeout precisa ser um número: 1 s de pausa já encerra a escuta, para a resposta chegar logo.
-// pergunta = 1 na primeira vez; 2 quando repetimos porque o paciente só disse "alô", "oi"...
+// speechTimeout precisa ser um número: 2 s de pausa encerram a escuta (com 1 s, "Ata... sim, tomei"
+// era cortado no "Ata").
+// pergunta = 1 na primeira vez; aumenta quando repetimos porque o paciente só disse "alô", "oi"...
+// ou o reconhecimento não entendeu. Abaixo desta confiança, uma fala que não é "sim" conta como "não entendi".
+const PERGUNTAS_MAX = 3;
+const CONFIANCA_ENTENDEU = 0.4;
 function criarGather(resposta, lista, pergunta = 1) {
   return resposta.gather({
     input: 'speech',
     language: 'pt-BR',
     speechModel: 'experimental_utterances',
-    speechTimeout: 1,
+    speechTimeout: 2,
     timeout: 10,
     hints: DICAS,
     action: `${config.baseUrl}/twilio/digito?ids=${lista}&p=${pergunta}`,
@@ -144,6 +148,7 @@ function lerResposta(body) {
   return {
     resultado: sim ? 'sim' : 'nao',
     fala,
+    confianca,
     origem: `fala "${fala}" (confiança ${Number.isFinite(confianca) ? confianca.toFixed(2) : '?'})`,
   };
 }
@@ -163,8 +168,9 @@ router.post('/digito', (req, res) => {
     return enviar(res, falhaTemporaria());
   }
 
-  const { resultado, fala, origem } = lerResposta(req.body);
+  const { resultado, fala, confianca, origem } = lerResposta(req.body);
   if (fala) guardarResposta(ids, fala);
+  const pergunta = Number(req.query.p || 1);
 
   // Quem "atendeu" foi a caixa postal: desliga sem deixar recado e conta como NÃO atendida, para a
   // próxima ligação repetir o lembrete completo (o paciente não ouviu nada).
@@ -176,12 +182,21 @@ router.post('/digito', (req, res) => {
     resposta.hangup();
     return enviar(res, resposta);
   }
-  // Só cumprimentou ("alô?", "oi, quem é?"): pergunta de novo, uma vez, em vez de contar como "não".
-  if (fala && ehSaudacao(fala) && Number(req.query.p || 1) < 2) {
-    console.log(`[twilio] chamadas ${ids.join(',')} | só cumprimentou ("${fala}") -> pergunta de novo`);
+  // Só cumprimentou ("alô?", "oi, quem é?") ou o reconhecimento quase não entendeu a fala (ex.:
+  // "Ata, sim, tomei sim" virou "A tarde" com confiança 0): pergunta de novo, em vez de contar como
+  // "não". No máximo PERGUNTAS_MAX perguntas por ligação.
+  const cumprimento = fala && ehSaudacao(fala);
+  const naoEntendeu = fala && resultado !== 'sim' && confianca < CONFIANCA_ENTENDEU;
+  if ((cumprimento || naoEntendeu) && pergunta < PERGUNTAS_MAX) {
+    console.log(`[twilio] chamadas ${ids.join(',')} | ${origem} -> ${cumprimento ? 'só cumprimentou' : 'não entendeu'}; pergunta de novo`);
     const lista = ids.join(',');
-    resposta.say(VOZ, 'Olá! Aqui é o LembreMed, o lembrete do seu remédio. Você já tomou o seu remédio?');
-    criarGather(resposta, lista, 2);
+    resposta.say(
+      VOZ,
+      cumprimento
+        ? 'Olá! Aqui é o LembreMed, o lembrete do seu remédio. Você já tomou o seu remédio?'
+        : 'Desculpe, não entendi. Você já tomou o seu remédio?'
+    );
+    criarGather(resposta, lista, pergunta + 1);
     resposta.redirect({ method: 'POST' }, `${config.baseUrl}/twilio/sem-digito?ids=${lista}`);
     return enviar(res, resposta);
   }
@@ -198,8 +213,8 @@ router.post('/digito', (req, res) => {
     resposta.say(VOZ, 'Obrigado! Até logo.');
   } else {
     // Ainda não tomou: fica sem_resposta e o escalonamento liga só para confirmar depois dos minutos
-    // escolhidos para o paciente (ou avisa o cuidador quando as tentativas acabarem). Não pergunta
-    // outra vez nesta ligação, para ela ser curta.
+    // escolhidos para o paciente (ou avisa o cuidador quando as tentativas acabarem). Uma resposta
+    // clara que não é "sim" não é perguntada de novo, para a ligação ser curta.
     atualizar(ids, 'sem_resposta');
     resposta.say(VOZ, respostaSemConfirmar(minutosParaReligar(ids), false));
   }
