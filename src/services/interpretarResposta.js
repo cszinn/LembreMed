@@ -98,6 +98,10 @@ const CAIXA_POSTAL = [
   /\bfora da area\b/,
   /\besta desligado\b/,
   /\bnao pode atender\b/,
+  // Mensagens da operadora antes de completar a ligação
+  /\bpermaneca na linha\b/,
+  /\bsua (chamada|ligacao) (esta sendo|sera) (encaminhada|completada|transferida)\b/,
+  /\bnumero (chamado|discado|que voce ligou) (esta )?ocupado\b/,
 ];
 
 function ehCaixaPostal(texto) {

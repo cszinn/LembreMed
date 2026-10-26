@@ -186,7 +186,10 @@ router.post('/digito', (req, res) => {
   // "Ata, sim, tomei sim" virou "A tarde" com confiança 0): pergunta de novo, em vez de contar como
   // "não". No máximo PERGUNTAS_MAX perguntas por ligação.
   const cumprimento = fala && ehSaudacao(fala);
-  const naoEntendeu = fala && resultado !== 'sim' && confianca < CONFIANCA_ENTENDEU;
+  // Também conta como "não entendi" um "sim" com confiança abaixo do mínimo para confirmar (ex.: "Tomei"
+  // com 0,41): pergunta de novo em vez de tratar como "não".
+  const simIncerto = resultado !== 'sim' && interpretarFala(fala || '') === 'sim';
+  const naoEntendeu = fala && resultado !== 'sim' && (confianca < CONFIANCA_ENTENDEU || simIncerto);
   if ((cumprimento || naoEntendeu) && pergunta < PERGUNTAS_MAX) {
     console.log(`[twilio] chamadas ${ids.join(',')} | ${origem} -> ${cumprimento ? 'só cumprimentou' : 'não entendeu'}; pergunta de novo`);
     const lista = ids.join(',');
