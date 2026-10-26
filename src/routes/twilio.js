@@ -2,7 +2,7 @@ const express = require('express');
 const twilio = require('twilio');
 const db = require('../db');
 const config = require('../config');
-const { montarMensagem, respostaSemConfirmar } = require('../services/mensagem');
+const { ABERTURA, montarMensagem, respostaSemConfirmar } = require('../services/mensagem');
 const validarAssinaturaTwilio = require('../middleware/twilioAssinatura');
 const { interpretarFala, ehCaixaPostal, ehSaudacao, DICAS } = require('../services/interpretarResposta');
 const { registrarFim, avisarConfirmacao, minutosParaReligar } = require('../services/escalonamento');
@@ -69,8 +69,8 @@ function falhaTemporaria() {
 
 // Cria o <Gather> que escuta a fala do paciente (pt-BR). Não há resposta por teclado.
 // experimental_utterances é o modelo da Twilio para respostas curtas ("sim", "já tomei"); com ele o
-// speechTimeout precisa ser um número: 2 s de pausa encerram a escuta (com 1 s, "Ata... sim, tomei"
-// era cortado no "Ata").
+// speechTimeout precisa ser um número: 1 s de pausa encerra a escuta, para a resposta chegar logo. Se
+// cortar uma resposta com pausa ("Ata... sim, tomei" vira só "Ata"), o sistema pergunta de novo.
 // pergunta = 1 na primeira vez; aumenta quando repetimos porque o paciente só disse "alô", "oi"...
 // ou o reconhecimento não entendeu. Abaixo desta confiança, uma fala que não é "sim" conta como "não entendi".
 const PERGUNTAS_MAX = 3;
@@ -80,7 +80,7 @@ function criarGather(resposta, lista, pergunta = 1) {
     input: 'speech',
     language: 'pt-BR',
     speechModel: 'experimental_utterances',
-    speechTimeout: 2,
+    speechTimeout: 1,
     timeout: 10,
     hints: DICAS,
     action: `${config.baseUrl}/twilio/digito?ids=${lista}&p=${pergunta}`,
@@ -124,6 +124,8 @@ router.post(['/voz', '/atendimento'], async (req, res) => {
 
     // A mensagem vem ANTES do <Gather> (e não dentro dele): só escutamos depois da pergunta. Assim o
     // "alô", "oi" ou até um "sim?" de quem atende não vira a resposta.
+    // Dois <Say>: a abertura fixa toca na hora (áudio já em cache) enquanto o resto é gerado.
+    resposta.say(VOZ, ABERTURA);
     resposta.say(VOZ, montarMensagem(itens[0].paciente, itens, tipo));
     criarGather(resposta, lista);
     resposta.redirect({ method: 'POST' }, `${config.baseUrl}/twilio/sem-digito?ids=${lista}`);

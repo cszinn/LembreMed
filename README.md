@@ -21,12 +21,12 @@ Muitos idosos e pacientes em tratamento contínuo esquecem de tomar os medicamen
 No horário cadastrado, o sistema liga para o paciente:
 
 > **08:00**
-> 🤖 *"Olá, Dona Maria. Está na hora do seu remédio: Losartana, o comprimido redondo e rosa. Você já tomou?"*
+> 🤖 *"Olá! Aqui é o LembreMed. Dona Maria, está na hora do seu remédio: Losartana, o comprimido redondo e rosa. Você já tomou?"*
 > 👵 *"Ainda não."*
 > 🤖 *"Tudo bem. Tome o seu remédio agora, por favor. Te ligo de novo em 5 minutos para confirmar. Até logo."*
 >
 > **08:05**
-> 🤖 *"Olá, Dona Maria. Você já tomou o seu remédio, Losartana?"*
+> 🤖 *"Olá! Aqui é o LembreMed. Dona Maria, você já tomou o seu remédio, Losartana?"*
 > 👵 *"Já tomei, sim."*
 > 🤖 *"Obrigado! Até logo."*
 
