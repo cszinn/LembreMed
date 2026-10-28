@@ -74,6 +74,7 @@ body {
   border-radius: var(--radius-md);
   border: 1px solid var(--border-color);
   padding: 18px 20px;
+  height: 100%;
   box-shadow: var(--shadow-sm);
   transition: transform 0.2s ease, box-shadow 0.2s ease;
   display: flex;
@@ -208,12 +209,8 @@ body {
   font-weight: 700;
 }
 
-/* Badges custom */
+/* Badges custom (tamanho em "Etiquetas", no fim do arquivo) */
 .badge-pill-soft {
-  padding: 4px 10px;
-  font-size: 0.72rem;
-  font-weight: 600;
-  border-radius: 9999px;
   display: inline-flex;
   align-items: center;
   gap: 5px;
@@ -231,6 +228,18 @@ body {
   border: 1px solid #cbd5e1;
 }
 
+.badge-pill-soft.wa-link {
+  background: #fff;
+  color: #198754;
+  border: 1px solid #a3cfbb;
+  text-decoration: none;
+}
+
+.badge-pill-soft.wa-link:hover {
+  background: #198754;
+  color: #fff;
+}
+
 /* Medication Cards */
 .med-card {
   border-radius: var(--radius-md);
@@ -240,6 +249,10 @@ body {
   margin-bottom: 16px;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
   transition: all 0.2s ease;
+}
+
+.med-card:last-child {
+  margin-bottom: 0;
 }
 
 .med-card:hover {
@@ -301,9 +314,6 @@ body {
   background: var(--primary);
   border-color: var(--primary);
   color: #fff;
-  font-weight: 600;
-  border-radius: var(--radius-sm);
-  padding: 8px 16px;
   transition: all 0.15s ease;
 }
 
@@ -318,8 +328,6 @@ body {
   background: var(--bg-muted);
   border-color: var(--border-color);
   color: var(--text-main);
-  font-weight: 600;
-  border-radius: var(--radius-sm);
 }
 
 .btn-secondary-custom:hover {
@@ -331,8 +339,6 @@ body {
   background: var(--danger-subtle);
   color: var(--danger);
   border: 1px solid #fecaca;
-  font-weight: 600;
-  border-radius: var(--radius-sm);
   transition: all 0.15s;
 }
 
@@ -447,4 +453,64 @@ body {
   vertical-align: middle;
   font-size: 0.88rem;
   border-bottom: 1px solid var(--border-color);
+}
+
+/* No celular a tabela rola de lado; só o "Detalhe" quebra linha */
+.history-table th, .history-table td:not(:last-child) {
+  white-space: nowrap;
+}
+
+.history-table td:last-child {
+  min-width: 220px;
+}
+
+/* Tamanhos padrão: todo botão de ação tem 42px (o mesmo dos campos) e todo botão pequeno 32px */
+.btn-primary-custom, .btn-secondary-custom, .btn-soft-danger,
+.btn-outline-primary, .btn-outline-secondary, .btn-outline-danger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 42px;
+  padding: 0 16px;
+  font-size: 0.95rem;
+  font-weight: 600;
+  border-radius: var(--radius-sm);
+}
+
+.btn.btn-sm:not(.btn-link) {
+  min-height: 32px;
+  padding: 0 12px;
+  font-size: 0.85rem;
+  border-radius: var(--radius-sm);
+}
+
+.form-control, .form-select {
+  min-height: 42px;
+}
+
+.form-control-sm {
+  min-height: 32px;
+  padding: 4px 10px;
+  font-size: 0.85rem;
+}
+
+/* Botões do topo: mesma altura */
+.nav-pill {
+  height: 40px;
+}
+
+/* Etiquetas: um tamanho só, sempre em pílula */
+.badge, .badge-pill-soft {
+  font-size: 0.75rem;
+  font-weight: 600;
+  padding: 4px 10px;
+  border-radius: 9999px;
+}
+
+/* Títulos de seção (Medicamentos, Histórico) com o mesmo tamanho */
+.section-title {
+  font-size: 1.125rem;
+  font-weight: 700;
+  margin-bottom: 0;
 }

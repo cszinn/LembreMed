@@ -294,7 +294,7 @@ function renderListaLateral() {
           </div>
         </div>
         <div class="text-end">
-          <span class="badge-pill-soft ${isAtivo ? 'active' : 'paused'}" style="font-size: 0.68rem; padding: 2px 8px;">
+          <span class="badge-pill-soft ${isAtivo ? 'active' : 'paused'}">
             ${isAtivo ? 'Ativo' : 'Pausado'}
           </span>
         </div>
@@ -403,14 +403,14 @@ async function carregarHistoricoChamadas(pacienteId) {
                 return `
                 <tr>
                   <td class="fw-semibold">${esc(c.data)}</td>
-                  <td><span class="badge bg-light text-dark border px-2 py-1">${esc(c.hora || '--:--')}</span></td>
+                  <td><span class="badge bg-light text-dark border">${esc(c.hora || '--:--')}</span></td>
                   <td class="fw-medium">${esc(c.medicamento || 'Geral')}</td>
                   <td>
                     <span class="fw-medium small">${c.tipo === 'lembrete' ? 'Lembrete' : 'Confirmação'}</span>
                     <span class="text-muted small d-block">${c.tentativa}ª ligação da dose</span>
                   </td>
                   <td>
-                    <span class="badge ${badgeClass} d-inline-flex align-items-center gap-1 py-1 px-2">
+                    <span class="badge ${badgeClass} d-inline-flex align-items-center gap-1">
                       <i class="bi ${icone}"></i> ${label}
                     </span>
                   </td>
@@ -452,7 +452,7 @@ function renderPacientePrincipal(p) {
           <div class="med-card">
             <div class="d-flex justify-content-between align-items-start gap-3 flex-wrap">
               <div>
-                <h4 class="h5 fw-bold mb-1 d-flex align-items-center gap-2">
+                <h4 class="fs-6 fw-bold mb-1 d-flex align-items-center gap-2">
                   <i class="bi bi-capsule text-primary"></i>
                   <span>${esc(m.nome)}</span>
                 </h4>
@@ -464,10 +464,10 @@ function renderPacientePrincipal(p) {
               </div>
               
               <div class="d-flex align-items-center gap-2">
-                <button class="btn btn-sm btn-outline-secondary d-flex align-items-center gap-1" data-acao="editar-med" data-id="${m.id}" title="Editar Medicamento">
+                <button class="btn btn-sm btn-outline-secondary" data-acao="editar-med" data-id="${m.id}" title="Editar Medicamento">
                   <i class="bi bi-pencil"></i> <span>Editar</span>
                 </button>
-                <button class="btn btn-sm btn-soft-danger d-flex align-items-center gap-1" data-acao="del-med" data-id="${m.id}" title="Remover Medicamento">
+                <button class="btn btn-sm btn-soft-danger" data-acao="del-med" data-id="${m.id}" title="Remover Medicamento">
                   <i class="bi bi-trash"></i> <span>Excluir</span>
                 </button>
               </div>
@@ -494,11 +494,10 @@ function renderPacientePrincipal(p) {
 
               <!-- Form Inline de Adicionar Horário -->
               <form class="d-flex gap-2 align-items-center" data-form="horario" data-id="${m.id}">
-                <div class="input-group input-group-sm" style="max-width: 200px;">
-                  <span class="input-group-text bg-white"><i class="bi bi-plus-circle text-primary"></i></span>
-                  <input type="time" name="hora" class="form-control" required>
-                </div>
-                <button type="submit" class="btn btn-sm btn-outline-primary fw-semibold">+ Adicionar Horário</button>
+                <input type="time" name="hora" class="form-control form-control-sm" style="max-width: 140px;" aria-label="Novo horário" required>
+                <button type="submit" class="btn btn-sm btn-outline-primary">
+                  <i class="bi bi-plus-lg"></i> <span>Adicionar Horário</span>
+                </button>
               </form>
             </div>
           </div>`)
@@ -508,8 +507,8 @@ function renderPacientePrincipal(p) {
           <i class="bi bi-capsule fs-1 text-light d-block mb-3"></i>
           <h4 class="h6 fw-bold text-dark">Nenhum medicamento cadastrado</h4>
           <p class="mb-3 small">Adicione o primeiro medicamento deste paciente para iniciar o monitoramento das doses.</p>
-          <button class="btn btn-sm btn-primary-custom" data-bs-toggle="modal" data-bs-target="#modalNovoMedicamento">
-            <i class="bi bi-plus-lg me-1"></i> Cadastrar Medicamento
+          <button class="btn btn-primary-custom" data-bs-toggle="modal" data-bs-target="#modalNovoMedicamento">
+            <i class="bi bi-plus-lg"></i> <span>Cadastrar Medicamento</span>
           </button>
         </div>`;
 
@@ -529,7 +528,7 @@ function renderPacientePrincipal(p) {
                 <h1 class="h3 fw-bold mb-0 text-dark">${esc(p.nome)}</h1>
                 <span class="badge-pill-soft ${isAtivo ? 'active' : 'paused'}">
                   <span class="rounded-circle ${isAtivo ? 'bg-success' : 'bg-secondary'}" style="width:7px; height:7px;"></span>
-                  ${isAtivo ? 'Ligações Automáticas Ativas' : 'Monitoramento Pausado'}
+                  ${isAtivo ? 'Ligações Automáticas Ativas' : 'Ligações Pausadas'}
                 </span>
               </div>
               
@@ -539,7 +538,7 @@ function renderPacientePrincipal(p) {
                   <span class="fw-semibold text-dark">${esc(fmtTel(p.telefone))}</span>
                 </span>
                 <a href="https://wa.me/${normalizarDigitos(p.telefone)}" target="_blank" rel="noopener"
-                   class="btn btn-sm btn-outline-success py-0 px-2 rounded-pill small d-inline-flex align-items-center gap-1">
+                   class="badge-pill-soft wa-link">
                   <i class="bi bi-whatsapp"></i> WhatsApp
                 </a>
               </div>
@@ -549,13 +548,11 @@ function renderPacientePrincipal(p) {
           <!-- Lado Direito: Ações Principais -->
           <div class="d-flex flex-column align-items-md-end gap-2">
             <div class="d-flex align-items-center gap-2">
-              <button class="btn btn-primary-custom d-flex align-items-center gap-2 py-2 px-3 shadow-sm" 
-                      data-acao="editar-paciente" data-id="${p.id}">
+              <button class="btn btn-primary-custom shadow-sm" data-acao="editar-paciente" data-id="${p.id}">
                 <i class="bi bi-pencil-square"></i>
                 <span>Editar Paciente</span>
               </button>
-              <button class="btn btn-soft-danger d-flex align-items-center gap-1 py-2 px-3" 
-                      data-acao="del-paciente" data-id="${p.id}">
+              <button class="btn btn-soft-danger" data-acao="del-paciente" data-id="${p.id}" title="Excluir paciente">
                 <i class="bi bi-trash"></i>
                 <span class="d-none d-sm-inline">Excluir</span>
               </button>
@@ -564,7 +561,7 @@ function renderPacientePrincipal(p) {
             <div class="form-check form-switch mt-1">
               <input class="form-check-input" type="checkbox" role="switch" id="swAtivo" data-acao="toggle-paciente" ${isAtivo ? 'checked' : ''}>
               <label class="form-check-label small fw-semibold text-muted" for="swAtivo">
-                ${isAtivo ? 'Pausar ligações' : 'Ativar ligações'}
+                ${isAtivo ? 'Ligações ativadas' : 'Ligações pausadas'}
               </label>
             </div>
           </div>
@@ -574,26 +571,22 @@ function renderPacientePrincipal(p) {
         <hr class="my-4">
 
         <!-- Informações do Cuidador Responsável e Alerta -->
-        <div class="row g-3 align-items-center bg-light p-3 rounded-3 border">
-          <div class="col-md-7">
-            <div class="d-flex align-items-center gap-2">
-              <div class="bg-white p-2 rounded-circle border text-primary">
-                <i class="bi bi-shield-check fs-5"></i>
+        <div class="d-flex flex-wrap align-items-center justify-content-between gap-3 bg-light p-3 rounded-3 border">
+          <div class="d-flex align-items-center gap-2">
+            <div class="bg-white p-2 rounded-circle border text-primary">
+              <i class="bi bi-shield-check fs-5"></i>
+            </div>
+            <div>
+              <div class="small text-muted text-uppercase fw-bold" style="font-size:0.7rem; letter-spacing:0.04em;">
+                Cuidador Vinculado (Sua Conta)
               </div>
-              <div>
-                <div class="small text-muted text-uppercase fw-bold" style="font-size:0.7rem; letter-spacing:0.04em;">
-                  Cuidador Vinculado (Sua Conta)
-                </div>
-                <div class="fw-bold text-dark">${esc(cuidadorLogado?.nome || 'Você')}</div>
-              </div>
+              <div class="fw-bold text-dark">${esc(cuidadorLogado?.nome || 'Você')}</div>
             </div>
           </div>
-          <div class="col-md-5 text-md-end">
-            <span class="badge bg-white text-dark border p-2 d-inline-flex align-items-center gap-2 shadow-sm">
-              <i class="bi bi-bell-fill text-warning"></i>
-              <span>Seus alertas chegam em: <strong>${esc(fmtTel(cuidadorLogado?.telefone))}</strong></span>
-            </span>
-          </div>
+          <span class="badge bg-white text-dark border d-inline-flex align-items-center gap-2 shadow-sm">
+            <i class="bi bi-bell-fill text-warning"></i>
+            <span>Seus alertas chegam em: <strong>${esc(fmtTel(cuidadorLogado?.telefone))}</strong></span>
+          </span>
         </div>
 
       </div>
@@ -626,40 +619,40 @@ function renderPacientePrincipal(p) {
       <div class="col-md-4">
         <div class="stat-card">
           <div class="stat-icon info">
-            <i class="bi bi-telephone-check-fill"></i>
+            <i class="bi bi-arrow-repeat"></i>
           </div>
           <div>
             <div class="stat-value">${p.minutos_religar} min</div>
-            <div class="stat-label">Religa para confirmar se ainda não tomou</div>
+            <div class="stat-label">Para religar se não tomou</div>
           </div>
         </div>
       </div>
     </div>
 
     <!-- Seção de Medicamentos e Prescrições -->
-    <div class="d-flex justify-content-between align-items-center mb-3">
+    <div class="d-flex flex-wrap justify-content-between align-items-center gap-3 mb-3">
       <div>
-        <h2 class="h5 fw-bold mb-0">Medicamentos & Horários</h2>
+        <h2 class="section-title">Medicamentos & Horários</h2>
         <p class="text-muted small mb-0">Configure os remédios que a assistente ligará avisando</p>
       </div>
-      <button class="btn btn-primary-custom d-flex align-items-center gap-1 shadow-sm" data-bs-toggle="modal" data-bs-target="#modalNovoMedicamento">
+      <button class="btn btn-primary-custom shadow-sm" data-bs-toggle="modal" data-bs-target="#modalNovoMedicamento">
         <i class="bi bi-plus-lg"></i>
-        <span>+ Adicionar Medicamento</span>
+        <span>Adicionar Medicamento</span>
       </button>
     </div>
 
-    <div class="mb-5">
+    <div class="mb-4">
       ${medsHtml}
     </div>
 
     <!-- Histórico de Chamadas Recentes do Paciente -->
     <div class="card-custom shadow-sm">
-      <div class="card-header-clean py-3">
+      <div class="card-header-clean flex-wrap gap-2">
         <div class="d-flex align-items-center gap-2">
           <i class="bi bi-clock-history text-primary fs-5"></i>
-          <h3 class="h6 fw-bold mb-0">Histórico de Ligações do Paciente</h3>
+          <h3 class="section-title">Histórico de Ligações do Paciente</h3>
         </div>
-        <span class="badge bg-light text-muted border small">Últimas 20 chamadas</span>
+        <span class="badge bg-light text-muted border">Últimas 20 chamadas</span>
       </div>
       <div class="p-3" id="historicoChamadasContainer">
         <div class="text-center py-3 text-muted small"><span class="spinner-border spinner-border-sm me-1"></span> Carregando histórico...</div>
@@ -706,8 +699,8 @@ async function atualizar() {
           <h2 class="h4 fw-bold text-dark">Você ainda não tem pacientes cadastrados</h2>
           <p class="mb-4 text-muted">Cadastre o seu paciente para começar a configurar os medicamentos e receber os alertas.</p>
           <div>
-            <button class="btn btn-primary-custom py-2 px-4 shadow-sm" data-bs-toggle="modal" data-bs-target="#modalNovoPaciente">
-              <i class="bi bi-person-plus-fill me-1"></i> Cadastrar Meu Primeiro Paciente
+            <button class="btn btn-primary-custom shadow-sm" data-bs-toggle="modal" data-bs-target="#modalNovoPaciente">
+              <i class="bi bi-person-plus-fill"></i> <span>Cadastrar Meu Primeiro Paciente</span>
             </button>
           </div>
         </div>`;
